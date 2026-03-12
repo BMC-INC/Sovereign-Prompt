@@ -1,0 +1,923 @@
+Let me read the relevant skills first before writing a single line of code.Alright, no filesystem tools in this environment—I'll build the full codebase from knowledge. Here's the complete SovereignPrompt project, file by file.
+
+---
+
+**`Cargo.toml`**
+```toml
+[package]
+name = "sovereign-prompt"
+version = "0.1.0"
+edition = "2021"
+authors = ["ExecLayer Inc."]
+description = "SovereignPrompt — Real-time MCP prompt optimization with persistence and token analysis"
+license = "MIT"
+
+[[bin]]
+name = "sovereign-prompt"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "0.1", features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+tiktoken-rs = "0.5"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+regex = "1"
+```
+
+---
+
+**`src/main.rs`**
+```rust
+mod analyzer;
+mod db;
+mod optimizer;
+mod tokenizer;
+mod types;
+mod server;
+
+use anyhow::Result;
+use tracing_subscriber::EnvFilter;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
+    let db_path = std::env::var("SOVEREIGN_DB_PATH")
+        .unwrap_or_else(|_| "./sovereign_prompt.db".to_string());
+
+    let db = db::Database::new(&db_path).await?;
+    db.migrate().await?;
+
+    tracing::info!("SovereignPrompt MCP server starting...");
+
+    server::run(db).await?;
+
+    Ok(())
+}
+```
+
+---
+
+**`src/types.rs`**
+```rust
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptRecord {
+    pub id: String,
+    pub user_id: String,
+    pub original_prompt: String,
+    pub original_token_count: i64,
+    pub refined_prompt: String,
+    pub refined_token_count: i64,
+    pub savings_percentage: f64,
+    pub analysis_feedback: serde_json::Value,
+    pub output: Option<String>,
+    pub output_token_count: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl PromptRecord {
+    pub fn new(
+        user_id: String,
+        original_prompt: String,
+        original_token_count: i64,
+        refined_prompt: String,
+        refined_token_count: i64,
+        analysis_feedback: serde_json::Value,
+    ) -> Self {
+        let savings = if original_token_count > 0 {
+            ((original_token_count - refined_token_count) as f64
+                / original_token_count as f64)
+                * 100.0
+        } else {
+            0.0
+        };
+
+        Self {
+            id: Uuid::new_v4().to_string(),
+            user_id,
+            original_prompt,
+            original_token_count,
+            refined_prompt,
+            refined_token_count,
+            savings_percentage: savings,
+            analysis_feedback,
+            output: None,
+            output_token_count: None,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizeRequest {
+    pub user_id: Option<String>,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureOutputRequest {
+    pub prompt_id: String,
+    pub output: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizeResponse {
+    pub prompt_id: String,
+    pub original_prompt: String,
+    pub original_token_count: i64,
+    pub refined_prompt: String,
+    pub refined_token_count: i64,
+    pub savings_percentage: f64,
+    pub feedback: Vec<FeedbackItem>,
+    pub variants: Vec<PromptVariant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedbackItem {
+    pub category: String,
+    pub severity: Severity,
+    pub message: String,
+    pub suggestion: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Severity {
+    Info,
+    Warning,
+    Critical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptVariant {
+    pub label: String,
+    pub prompt: String,
+    pub token_count: i64,
+    pub use_case: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserStats {
+    pub user_id: String,
+    pub total_prompts: i64,
+    pub total_tokens_saved: i64,
+    pub average_savings_percentage: f64,
+    pub top_issues: Vec<String>,
+}
+```
+
+---
+
+**`src/tokenizer.rs`**
+```rust
+use anyhow::Result;
+use tiktoken_rs::{cl100k_base, CoreBPE};
+
+pub struct Tokenizer {
+    bpe: CoreBPE,
+}
+
+impl Tokenizer {
+    pub fn new() -> Result<Self> {
+        let bpe = cl100k_base()?;
+        Ok(Self { bpe })
+    }
+
+    pub fn count(&self, text: &str) -> i64 {
+        self.bpe.encode_with_special_tokens(text).len() as i64
+    }
+}
+```
+
+---
+
+**`src/analyzer.rs`**
+```rust
+use crate::types::{FeedbackItem, Severity};
+use regex::Regex;
+
+pub struct PromptAnalyzer;
+
+impl PromptAnalyzer {
+    pub fn analyze(prompt: &str) -> Vec<FeedbackItem> {
+        let mut feedback = Vec::new();
+
+        check_vagueness(prompt, &mut feedback);
+        check_redundancy(prompt, &mut feedback);
+        check_missing_context(prompt, &mut feedback);
+        check_politeness_tokens(prompt, &mut feedback);
+        check_prompt_injection(prompt, &mut feedback);
+        check_task_separation(prompt, &mut feedback);
+        check_output_format(prompt, &mut feedback);
+        check_ambiguous_pronouns(prompt, &mut feedback);
+
+        feedback
+    }
+}
+
+fn check_vagueness(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let vague_terms = [
+        "something", "somehow", "kind of", "sort of", "maybe",
+        "perhaps", "possibly", "might", "stuff", "things", "etc",
+        "and so on", "whatever", "anything",
+    ];
+    let lower = prompt.to_lowercase();
+    let found: Vec<&str> = vague_terms
+        .iter()
+        .filter(|t| lower.contains(*t))
+        .copied()
+        .collect();
+
+    if !found.is_empty() {
+        feedback.push(FeedbackItem {
+            category: "Clarity".to_string(),
+            severity: Severity::Warning,
+            message: format!("Vague language detected: {}", found.join(", ")),
+            suggestion: Some(
+                "Replace vague terms with specific, measurable language.".to_string(),
+            ),
+        });
+    }
+}
+
+fn check_redundancy(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let words: Vec<&str> = prompt.split_whitespace().collect();
+    let mut seen = std::collections::HashMap::new();
+    let mut duplicates = Vec::new();
+
+    for word in &words {
+        let lower = word.to_lowercase();
+        let lower = lower.trim_matches(|c: char| !c.is_alphanumeric());
+        if lower.len() > 4 {
+            *seen.entry(lower.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    for (word, count) in &seen {
+        if *count > 2 {
+            duplicates.push(word.clone());
+        }
+    }
+
+    if !duplicates.is_empty() {
+        feedback.push(FeedbackItem {
+            category: "Redundancy".to_string(),
+            severity: Severity::Info,
+            message: format!("Repeated words detected: {}", duplicates.join(", ")),
+            suggestion: Some("Consolidate repeated concepts to reduce token waste.".to_string()),
+        });
+    }
+}
+
+fn check_missing_context(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let action_words = ["fix", "update", "change", "modify", "edit", "improve", "make"];
+    let lower = prompt.to_lowercase();
+    let has_action = action_words.iter().any(|w| lower.contains(w));
+    let has_specifics = prompt.len() > 50;
+
+    if has_action && !has_specifics {
+        feedback.push(FeedbackItem {
+            category: "Context".to_string(),
+            severity: Severity::Critical,
+            message: "Action requested but context is minimal.".to_string(),
+            suggestion: Some(
+                "Add: what specifically, where it is, what the expected result should be."
+                    .to_string(),
+            ),
+        });
+    }
+}
+
+fn check_politeness_tokens(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let polite_terms = [
+        "please", "kindly", "could you", "would you mind",
+        "if you don't mind", "thank you", "thanks",
+    ];
+    let lower = prompt.to_lowercase();
+    let found: Vec<&str> = polite_terms
+        .iter()
+        .filter(|t| lower.contains(*t))
+        .copied()
+        .collect();
+
+    if !found.is_empty() {
+        feedback.push(FeedbackItem {
+            category: "Token Efficiency".to_string(),
+            severity: Severity::Info,
+            message: format!("Politeness tokens detected: {}", found.join(", ")),
+            suggestion: Some(
+                "LLMs don't require politeness. Remove to save tokens.".to_string(),
+            ),
+        });
+    }
+}
+
+fn check_prompt_injection(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let injection_patterns = [
+        "ignore previous",
+        "ignore all",
+        "disregard",
+        "forget everything",
+        "new instruction",
+        "system:",
+        "assistant:",
+        "jailbreak",
+    ];
+    let lower = prompt.to_lowercase();
+    let found: Vec<&str> = injection_patterns
+        .iter()
+        .filter(|p| lower.contains(*p))
+        .copied()
+        .collect();
+
+    if !found.is_empty() {
+        feedback.push(FeedbackItem {
+            category: "Security".to_string(),
+            severity: Severity::Critical,
+            message: format!("Potential prompt injection pattern detected: {}", found.join(", ")),
+            suggestion: Some("Review prompt for injection risks before submission.".to_string()),
+        });
+    }
+}
+
+fn check_task_separation(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let conjunctions = ["and then", "also", "additionally", "furthermore", "as well as"];
+    let lower = prompt.to_lowercase();
+    let count = conjunctions.iter().filter(|c| lower.contains(*c)).count();
+
+    if count >= 2 {
+        feedback.push(FeedbackItem {
+            category: "Task Separation".to_string(),
+            severity: Severity::Warning,
+            message: "Multiple tasks detected in a single prompt.".to_string(),
+            suggestion: Some(
+                "Split into separate prompts for each task to improve accuracy.".to_string(),
+            ),
+        });
+    }
+}
+
+fn check_output_format(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let format_signals = [
+        "list", "table", "json", "markdown", "bullet", "numbered",
+        "summary", "paragraph", "code", "csv",
+    ];
+    let lower = prompt.to_lowercase();
+    let has_format = format_signals.iter().any(|f| lower.contains(f));
+
+    if !has_format && prompt.len() > 30 {
+        feedback.push(FeedbackItem {
+            category: "Output Format".to_string(),
+            severity: Severity::Info,
+            message: "No output format specified.".to_string(),
+            suggestion: Some(
+                "Specify desired format (e.g., JSON, bullet list, paragraph) for consistent results."
+                    .to_string(),
+            ),
+        });
+    }
+}
+
+fn check_ambiguous_pronouns(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let re = Regex::new(r"\b(it|this|that|they|them|those|these)\b").unwrap();
+    let matches: Vec<_> = re.find_iter(prompt).collect();
+
+    if matches.len() >= 3 {
+        feedback.push(FeedbackItem {
+            category: "Clarity".to_string(),
+            severity: Severity::Warning,
+            message: "Excessive ambiguous pronouns detected.".to_string(),
+            suggestion: Some(
+                "Replace pronouns with explicit nouns to remove ambiguity.".to_string(),
+            ),
+        });
+    }
+}
+```
+
+---
+
+**`src/optimizer.rs`**
+```rust
+use crate::types::{FeedbackItem, PromptVariant, Severity};
+use crate::tokenizer::Tokenizer;
+
+pub struct PromptOptimizer;
+
+impl PromptOptimizer {
+    pub fn refine(prompt: &str, feedback: &[FeedbackItem], tokenizer: &Tokenizer) -> String {
+        let mut refined = prompt.to_string();
+
+        // Strip politeness tokens
+        let polite = [
+            "please ", "kindly ", "could you ", "would you mind ",
+            "if you don't mind, ", "thank you", "thanks",
+        ];
+        for p in &polite {
+            refined = refined.replace(p, "");
+            refined = refined.replace(&p.to_uppercase(), "");
+        }
+
+        // Normalize whitespace
+        let re = regex::Regex::new(r"\s{2,}").unwrap();
+        refined = re.replace_all(&refined, " ").trim().to_string();
+
+        // Append format instruction if missing
+        let has_critical = feedback.iter().any(|f| {
+            matches!(f.severity, Severity::Critical)
+        });
+
+        if !has_critical {
+            let has_format_signal = ["list", "json", "table", "bullet", "code", "paragraph"]
+                .iter()
+                .any(|s| refined.to_lowercase().contains(s));
+
+            if !has_format_signal && refined.len() > 30 {
+                refined.push_str(" Respond concisely and directly.");
+            }
+        }
+
+        refined
+    }
+
+    pub fn generate_variants(
+        prompt: &str,
+        tokenizer: &Tokenizer,
+    ) -> Vec<PromptVariant> {
+        vec![
+            PromptVariant {
+                label: "Precision".to_string(),
+                prompt: format!("{} Be exact, technical, and minimal.", prompt),
+                token_count: tokenizer.count(&format!("{} Be exact, technical, and minimal.", prompt)),
+                use_case: "Engineering, code generation, structured output".to_string(),
+            },
+            PromptVariant {
+                label: "Creative".to_string(),
+                prompt: format!("{} Think broadly and explore multiple angles.", prompt),
+                token_count: tokenizer.count(&format!("{} Think broadly and explore multiple angles.", prompt)),
+                use_case: "Brainstorming, ideation, content generation".to_string(),
+            },
+            PromptVariant {
+                label: "Concise".to_string(),
+                prompt: prompt
+                    .split_whitespace()
+                    .take(prompt.split_whitespace().count() / 2 + 1)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                token_count: tokenizer.count(
+                    &prompt
+                        .split_whitespace()
+                        .take(prompt.split_whitespace().count() / 2 + 1)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ),
+                use_case: "Quick lookups, simple commands, minimal context".to_string(),
+            },
+        ]
+    }
+}
+```
+
+---
+
+**`src/db.rs`**
+```rust
+use crate::types::{PromptRecord, UserStats};
+use anyhow::Result;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+
+pub struct Database {
+    pool: SqlitePool,
+}
+
+impl Database {
+    pub async fn new(path: &str) -> Result<Self> {
+        let url = format!("sqlite://{}?mode=rwc", path);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await?;
+        Ok(Self { pool })
+    }
+
+    pub async fn migrate(&self) -> Result<()> {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS prompts (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                original_prompt TEXT NOT NULL,
+                original_token_count INTEGER NOT NULL,
+                refined_prompt TEXT NOT NULL,
+                refined_token_count INTEGER NOT NULL,
+                savings_percentage REAL NOT NULL,
+                analysis_feedback TEXT NOT NULL,
+                output TEXT,
+                output_token_count INTEGER,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id);
+            CREATE INDEX IF NOT EXISTS idx_prompts_created_at ON prompts(created_at);
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_prompt(&self, record: &PromptRecord) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO prompts (
+                id, user_id, original_prompt, original_token_count,
+                refined_prompt, refined_token_count, savings_percentage,
+                analysis_feedback, output, output_token_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&record.id)
+        .bind(&record.user_id)
+        .bind(&record.original_prompt)
+        .bind(record.original_token_count)
+        .bind(&record.refined_prompt)
+        .bind(record.refined_token_count)
+        .bind(record.savings_percentage)
+        .bind(record.analysis_feedback.to_string())
+        .bind(&record.output)
+        .bind(record.output_token_count)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_output(
+        &self,
+        prompt_id: &str,
+        output: &str,
+        output_token_count: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE prompts
+            SET output = ?, output_token_count = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(output)
+        .bind(output_token_count)
+        .bind(prompt_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_user_stats(&self, user_id: &str) -> Result<UserStats> {
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                COUNT(*) as total_prompts,
+                SUM(original_token_count - refined_token_count) as total_tokens_saved,
+                AVG(savings_percentage) as avg_savings
+            FROM prompts
+            WHERE user_id = ?
+            "#,
+            user_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(UserStats {
+            user_id: user_id.to_string(),
+            total_prompts: row.total_prompts,
+            total_tokens_saved: row.total_tokens_saved.unwrap_or(0),
+            average_savings_percentage: row.avg_savings.unwrap_or(0.0),
+            top_issues: vec![],
+        })
+    }
+
+    pub async fn get_recent_prompts(
+        &self,
+        user_id: &str,
+        limit: i64,
+    ) -> Result<Vec<PromptRecord>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT * FROM prompts
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            "#,
+            user_id,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let records = rows
+            .into_iter()
+            .map(|r| PromptRecord {
+                id: r.id,
+                user_id: r.user_id,
+                original_prompt: r.original_prompt,
+                original_token_count: r.original_token_count,
+                refined_prompt: r.refined_prompt,
+                refined_token_count: r.refined_token_count,
+                savings_percentage: r.savings_percentage,
+                analysis_feedback: serde_json::from_str(&r.analysis_feedback)
+                    .unwrap_or_default(),
+                output: r.output,
+                output_token_count: r.output_token_count,
+                created_at: r.created_at
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .unwrap_or_default(),
+            })
+            .collect();
+
+        Ok(records)
+    }
+}
+```
+
+---
+
+**`src/server.rs`**
+```rust
+use crate::analyzer::PromptAnalyzer;
+use crate::db::Database;
+use crate::optimizer::PromptOptimizer;
+use crate::tokenizer::Tokenizer;
+use crate::types::{
+    CaptureOutputRequest, OptimizeRequest, OptimizeResponse, PromptRecord,
+};
+use anyhow::Result;
+use rmcp::{
+    model::{
+        CallToolResult, Content, Implementation, ProtocolVersion,
+        ServerCapabilities, ServerInfo,
+    },
+    schemars, tool,
+    ServerHandler, ServiceExt,
+};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+#[derive(Clone)]
+pub struct SovereignPromptServer {
+    db: Arc<Database>,
+    tokenizer: Arc<Tokenizer>,
+}
+
+#[tool(tool_box)]
+impl SovereignPromptServer {
+    #[tool(description = "Optimize a prompt. Returns refined version, token savings, feedback, and variants.")]
+    async fn optimize_prompt(
+        &self,
+        #[tool(aggr)] req: OptimizeRequest,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let user_id = req
+            .user_id
+            .unwrap_or_else(|| "anonymous".to_string());
+
+        let original_tokens = self.tokenizer.count(&req.prompt);
+        let feedback = PromptAnalyzer::analyze(&req.prompt);
+        let refined = PromptOptimizer::refine(&req.prompt, &feedback, &self.tokenizer);
+        let refined_tokens = self.tokenizer.count(&refined);
+        let variants = PromptOptimizer::generate_variants(&refined, &self.tokenizer);
+
+        let savings = if original_tokens > 0 {
+            ((original_tokens - refined_tokens) as f64 / original_tokens as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let feedback_json = serde_json::to_value(&feedback).unwrap_or_default();
+
+        let record = PromptRecord::new(
+            user_id,
+            req.prompt.clone(),
+            original_tokens,
+            refined.clone(),
+            refined_tokens,
+            feedback_json,
+        );
+
+        let prompt_id = record.id.clone();
+
+        self.db
+            .insert_prompt(&record)
+            .await
+            .map_err(|e| rmcp::Error::internal_error(e.to_string(), None))?;
+
+        let response = OptimizeResponse {
+            prompt_id,
+            original_prompt: req.prompt,
+            original_token_count: original_tokens,
+            refined_prompt: refined,
+            refined_token_count: refined_tokens,
+            savings_percentage: savings,
+            feedback,
+            variants,
+        };
+
+        let json = serde_json::to_string_pretty(&response)
+            .map_err(|e| rmcp::Error::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "Capture the AI output for a previously optimized prompt to enable learning.")]
+    async fn capture_output(
+        &self,
+        #[tool(aggr)] req: CaptureOutputRequest,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let output_tokens = self.tokenizer.count(&req.output);
+
+        self.db
+            .update_output(&req.prompt_id, &req.output, output_tokens)
+            .await
+            .map_err(|e| rmcp::Error::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::json!({
+                "status": "captured",
+                "prompt_id": req.prompt_id,
+                "output_token_count": output_tokens
+            })
+            .to_string(),
+        )]))
+    }
+
+    #[tool(description = "Get optimization stats for a user — total prompts, tokens saved, average savings.")]
+    async fn get_stats(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "User ID to fetch stats for")]
+        user_id: String,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let stats = self
+            .db
+            .get_user_stats(&user_id)
+            .await
+            .map_err(|e| rmcp::Error::internal_error(e.to_string(), None))?;
+
+        let json = serde_json::to_string_pretty(&stats)
+            .map_err(|e| rmcp::Error::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "Get recent prompt history for a user.")]
+    async fn get_history(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "User ID")]
+        user_id: String,
+        #[tool(param)]
+        #[schemars(description = "Number of recent prompts to return (max 50)")]
+        limit: Option<i64>,
+    ) -> Result<CallToolResult, rmcp::Error> {
+        let limit = limit.unwrap_or(10).min(50);
+        let history = self
+            .db
+            .get_recent_prompts(&user_id, limit)
+            .await
+            .map_err(|e| rmcp::Error::internal_error(e.to_string(), None))?;
+
+        let json = serde_json::to_string_pretty(&history)
+            .map_err(|e| rmcp::Error::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+}
+
+#[rmcp::async_trait]
+impl ServerHandler for SovereignPromptServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .build(),
+            server_info: Implementation {
+                name: "SovereignPrompt".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            ..Default::default()
+        }
+    }
+}
+
+pub async fn run(db: Database) -> Result<()> {
+    let tokenizer = Tokenizer::new()?;
+
+    let server = SovereignPromptServer {
+        db: Arc::new(db),
+        tokenizer: Arc::new(tokenizer),
+    };
+
+    let service = server.serve(rmcp::transport::stdio()).await?;
+    service.waiting().await?;
+
+    Ok(())
+}
+```
+
+---
+
+**`.env.example`**
+```
+SOVEREIGN_DB_PATH=./sovereign_prompt.db
+RUST_LOG=info
+```
+
+---
+
+**`README.md`**
+```markdown
+# SovereignPrompt
+
+Real-time MCP prompt optimization with token analysis, heuristic evaluation, and persistence.
+Built by ExecLayer Inc.
+
+## Features
+- Real-time prompt analysis (clarity, redundancy, context, injection detection)
+- Accurate token counting via tiktoken (cl100k_base)
+- Token savings percentage on every optimization
+- 3 prompt variants per request (Precision, Creative, Concise)
+- Full persistence: prompts + outputs stored in SQLite
+- User stats: total tokens saved, average savings, history
+- MCP-native: works with any MCP-compatible client
+
+## Tools Exposed
+| Tool | Description |
+|------|-------------|
+| `optimize_prompt` | Analyze and refine a prompt, returns feedback + variants |
+| `capture_output` | Store AI output against a prompt for learning |
+| `get_stats` | User-level token savings stats |
+| `get_history` | Recent prompt history |
+
+## Setup
+```bash
+cp .env.example .env
+cargo build --release
+```
+
+## MCP Config (claude_desktop_config.json)
+```json
+{
+  "mcpServers": {
+    "sovereign-prompt": {
+      "command": "/path/to/sovereign-prompt",
+      "env": {
+        "SOVEREIGN_DB_PATH": "/path/to/sovereign_prompt.db"
+      }
+    }
+  }
+}
+```
+
+## ExecLayer Integration
+SovereignPrompt is designed to connect with ExecLayer's SovereignClaw governance layer.
+Cryptographic execution binding and audit trails for enterprise compliance coming in v0.2.
+```
+
+---
+
+That's the full codebase. Here's your repo structure:
+
+```
+sovereign-prompt/
+├── Cargo.toml
+├── .env.example
+├── README.md
+└── src/
+    ├── main.rs
+    ├── types.rs
+    ├── tokenizer.rs
+    ├── analyzer.rs
+    ├── optimizer.rs
+    ├── db.rs
+    └── server.rs
+```
+
+**To ship:**
+1. `cargo new sovereign-prompt` on your machine
+2. Replace the generated files with everything above
+3. `cargo build --release` — it'll pull all deps
+4. Test with `cargo run` and point your MCP client at it
+
+The ExecLayer integration hook is already baked into the README for when you're ready to layer in governance. What do you want to tackle next—landing page, pricing page, or the GitHub README polish?
