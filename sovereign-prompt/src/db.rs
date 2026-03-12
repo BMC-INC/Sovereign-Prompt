@@ -3,6 +3,7 @@ use anyhow::Result;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Row, SqlitePool};
 
+#[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
 }
@@ -22,6 +23,8 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS prompts (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
+                domain TEXT NOT NULL DEFAULT 'general',
+                token_model TEXT NOT NULL DEFAULT 'cl100k_base',
                 original_prompt TEXT NOT NULL,
                 original_token_count INTEGER NOT NULL,
                 refined_prompt TEXT NOT NULL,
@@ -36,6 +39,16 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Backward-compatible schema upgrades for existing SQLite files.
+        self.add_column_if_missing(
+            "ALTER TABLE prompts ADD COLUMN domain TEXT NOT NULL DEFAULT 'general'",
+        )
+        .await?;
+        self.add_column_if_missing(
+            "ALTER TABLE prompts ADD COLUMN token_model TEXT NOT NULL DEFAULT 'cl100k_base'",
+        )
+        .await?;
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id)")
             .execute(&self.pool)
             .await?;
@@ -47,16 +60,29 @@ impl Database {
         Ok(())
     }
 
+    async fn add_column_if_missing(&self, query: &str) -> Result<()> {
+        let result = sqlx::query(query).execute(&self.pool).await;
+        if let Err(err) = result {
+            let msg = err.to_string().to_lowercase();
+            if !msg.contains("duplicate column name") {
+                return Err(err.into());
+            }
+        }
+        Ok(())
+    }
+
     pub async fn insert_prompt(&self, record: &PromptRecord) -> Result<()> {
         sqlx::query(
             "INSERT INTO prompts (
-                id, user_id, original_prompt, original_token_count,
+                id, user_id, domain, token_model, original_prompt, original_token_count,
                 refined_prompt, refined_token_count, savings_percentage,
                 analysis_feedback, output, output_token_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.user_id)
+        .bind(&record.domain)
+        .bind(&record.token_model)
         .bind(&record.original_prompt)
         .bind(record.original_token_count)
         .bind(&record.refined_prompt)
@@ -77,14 +103,12 @@ impl Database {
         output: &str,
         output_token_count: i64,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE prompts SET output = ?, output_token_count = ? WHERE id = ?",
-        )
-        .bind(output)
-        .bind(output_token_count)
-        .bind(prompt_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE prompts SET output = ?, output_token_count = ? WHERE id = ?")
+            .bind(output)
+            .bind(output_token_count)
+            .bind(prompt_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -139,18 +163,13 @@ impl Database {
         })
     }
 
-    pub async fn get_recent_prompts(
-        &self,
-        user_id: &str,
-        limit: i64,
-    ) -> Result<Vec<PromptRecord>> {
-        let rows = sqlx::query(
-            "SELECT * FROM prompts WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-        )
-        .bind(user_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+    pub async fn get_recent_prompts(&self, user_id: &str, limit: i64) -> Result<Vec<PromptRecord>> {
+        let rows =
+            sqlx::query("SELECT * FROM prompts WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+                .bind(user_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?;
 
         let records = rows
             .into_iter()
@@ -159,13 +178,14 @@ impl Database {
                 PromptRecord {
                     id: r.get("id"),
                     user_id: r.get("user_id"),
+                    domain: r.get("domain"),
+                    token_model: r.get("token_model"),
                     original_prompt: r.get("original_prompt"),
                     original_token_count: r.get("original_token_count"),
                     refined_prompt: r.get("refined_prompt"),
                     refined_token_count: r.get("refined_token_count"),
                     savings_percentage: r.get("savings_percentage"),
-                    analysis_feedback: serde_json::from_str(&feedback_str)
-                        .unwrap_or_default(),
+                    analysis_feedback: serde_json::from_str(&feedback_str).unwrap_or_default(),
                     output: r.get("output"),
                     output_token_count: r.get("output_token_count"),
                     created_at: r

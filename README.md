@@ -6,7 +6,7 @@
 <img src="https://img.shields.io/badge/MCP-Native-6c5ce7?style=for-the-badge" alt="MCP Native" />
 <img src="https://img.shields.io/badge/SQLite-Persistence-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" />
 <img src="https://img.shields.io/badge/License-MIT-00cec9?style=for-the-badge" alt="MIT License" />
-<img src="https://img.shields.io/badge/Tests-27%20Passing-2ecc71?style=for-the-badge" alt="Tests Passing" />
+<img src="https://img.shields.io/badge/Tests-29%20Passing-2ecc71?style=for-the-badge" alt="Tests Passing" />
 
 <br><br>
 
@@ -45,33 +45,9 @@ Every prompt you send to an LLM costs tokens. Most prompts are bloated with poli
 
 ## How It Works
 
-```
-                    ┌─────────────────────────────────────────┐
-                    │           MCP Client Request             │
-                    └──────────────────┬──────────────────────┘
-                                       │
-                                       ▼
-                    ┌─────────────────────────────────────────┐
-                    │         SovereignPrompt Server           │
-                    │                                         │
-                    │  ┌──────────┐  ┌──────────┐  ┌───────┐ │
-                    │  │ Analyzer │→ │ Optimizer │→ │Tokenizer│
-                    │  │ 8 checks │  │ refine +  │  │cl100k │ │
-                    │  │          │  │ variants  │  │ _base │ │
-                    │  └──────────┘  └──────────┘  └───────┘ │
-                    │         │                        │      │
-                    │         ▼                        ▼      │
-                    │  ┌─────────────────────────────────┐    │
-                    │  │     SQLite Persistence Layer     │    │
-                    │  │  prompts · outputs · analytics   │    │
-                    │  └─────────────────────────────────┘    │
-                    └─────────────────────────────────────────┘
-                                       │
-                                       ▼
-                    ┌─────────────────────────────────────────┐
-                    │   Optimized Prompt + Feedback + Variants │
-                    └─────────────────────────────────────────┘
-```
+![How It Works Animation](./sovereign-prompt/assets/how-it-works.gif)
+
+Color animated flow rendered with Remotion. Covers request intake, heuristics, domain templates, multi-model tokenization, and persistence.
 
 ---
 
@@ -88,7 +64,7 @@ Every prompt you send to an LLM costs tokens. Most prompts are bloated with poli
 <td width="50%">
 
 **Accurate Token Counting**
-Uses `tiktoken-rs` with the `cl100k_base` encoding (same tokenizer as GPT-4 / Claude). Every optimization reports exact before/after token counts and savings percentage.
+Uses `tiktoken-rs` with `cl100k_base`, `o200k_base`, `p50k_base`, and `r50k_base`. Every optimization reports exact before/after counts for the selected model plus a full cross-model matrix.
 
 </td>
 </tr>
@@ -101,8 +77,8 @@ Every optimization generates three tailored variants — **Precision** (technica
 </td>
 <td width="50%">
 
-**Full Persistence + Analytics**
-Every prompt, refinement, and AI output is stored in SQLite. Query per-user stats including total tokens saved, average savings percentage, and top recurring issues.
+**Template Library + Live Dashboard**
+Per-domain prompt templates (`backend`, `frontend`, `data`, `security`, `product`, `documentation`) are applied before final output. A built-in Axum dashboard streams live analytics over WebSockets.
 
 </td>
 </tr>
@@ -114,10 +90,12 @@ Every prompt, refinement, and AI output is stored in SQLite. Query per-user stat
 
 | Tool | Description | Key Parameters |
 |:-----|:------------|:---------------|
-| **`optimize_prompt`** | Analyze and refine a prompt. Returns feedback, refined version, token savings, and 3 variants. | `prompt` (required), `user_id` (optional) |
-| **`capture_output`** | Store the AI's response against a prompt ID for output tracking and learning. | `prompt_id`, `output` |
+| **`optimize_prompt`** | Analyze and refine a prompt with optional domain templates and model-selectable token counting. | `prompt` (required), `user_id` (optional), `domain` (optional), `token_model` (optional) |
+| **`capture_output`** | Store the AI's response against a prompt ID for output tracking and learning. | `prompt_id`, `output`, `token_model` (optional) |
 | **`get_stats`** | Retrieve per-user optimization metrics — total prompts, tokens saved, average savings, top issues. | `user_id` |
 | **`get_history`** | Fetch recent prompt history with full refinement data. | `user_id`, `limit` (max 50) |
+| **`list_templates`** | List available optimization domains in the template library. | _none_ |
+| **`count_tokens`** | Count tokens for text using one model or all supported models. | `text` (required), `model` (optional) |
 
 ---
 
@@ -138,33 +116,9 @@ Every prompt, refinement, and AI output is stored in SQLite. Query per-user stat
 
 ## Optimization Pipeline
 
-```
-Input: "Please kindly help me fix the thing with the stuff"
-                              │
-                    ┌─────────▼──────────┐
-                    │  Strip Politeness   │  ← case-insensitive regex
-                    │  "help me fix the   │     with word boundaries
-                    │   thing with the    │
-                    │   stuff"            │
-                    └─────────┬──────────┘
-                              │
-                    ┌─────────▼──────────┐
-                    │ Normalize Whitespace│  ← collapse runs, trim
-                    └─────────┬──────────┘
-                              │
-                    ┌─────────▼──────────┐
-                    │ Append Format Hint  │  ← if no format signal
-                    │ (when no critical   │     and length > 30
-                    │  issues detected)   │
-                    └─────────┬──────────┘
-                              │
-                    ┌─────────▼──────────┐
-                    │ Generate 3 Variants │
-                    │  ├─ Precision       │
-                    │  ├─ Creative        │
-                    │  └─ Concise         │
-                    └────────────────────┘
-```
+![Optimization Pipeline Animation](./sovereign-prompt/assets/optimization-pipeline.gif)
+
+Animated stages: analysis -> domain template injection -> refinement -> variant generation -> multi-model token matrix.
 
 ---
 
@@ -172,9 +126,10 @@ Input: "Please kindly help me fix the thing with the stuff"
 
 | Component | Crate | Purpose |
 |:----------|:------|:--------|
-| **MCP Transport** | `rmcp 0.1` | Native Model Context Protocol server via stdio |
-| **Tokenizer** | `tiktoken-rs 0.5` | `cl100k_base` BPE encoding for accurate token counts |
+| **MCP Transport** | `rmcp 0.1` | Native MCP server over `stdio` (default) or network `SSE` transport |
+| **Tokenizer** | `tiktoken-rs 0.5` | Multi-model counts (`cl100k_base`, `o200k_base`, `p50k_base`, `r50k_base`) |
 | **Database** | `sqlx 0.7` | Async SQLite with runtime queries, zero compile-time DB needed |
+| **Dashboard + WS** | `axum 0.7` | Embedded analytics dashboard with WebSocket snapshots |
 | **Runtime** | `tokio 1` | Full-featured async runtime with signal handling |
 | **Serialization** | `serde 1` + `serde_json 1` | JSON serialization for MCP protocol and persistence |
 | **Regex** | `regex 1` | Cached via `OnceLock` for politeness stripping and pronoun detection |
@@ -194,14 +149,19 @@ sovereign-prompt/
 ├── src/
 │   ├── main.rs          # Entry point — dotenv, DB init, signal handling
 │   ├── lib.rs           # Library re-exports for integration tests
-│   ├── server.rs        # MCP ServerHandler — 4 tools, schema definitions
+│   ├── server.rs        # MCP ServerHandler — 6 tools, schema definitions
 │   ├── analyzer.rs      # 8 heuristic checks with cached regex
 │   ├── optimizer.rs     # Politeness stripping, normalization, variant generation
-│   ├── tokenizer.rs     # tiktoken cl100k_base wrapper
+│   ├── templates.rs     # Domain template library and constraints
+│   ├── tokenizer.rs     # Model-aware token counting across 4 encodings
+│   ├── dashboard.rs     # Axum dashboard + WebSocket analytics stream
 │   ├── types.rs         # PromptRecord, OptimizeResponse, FeedbackItem, UserStats
 │   └── db.rs            # SQLite — migrations, CRUD, stats aggregation
+├── assets/
+│   ├── how-it-works.gif
+│   └── optimization-pipeline.gif
 └── tests/
-    └── integration_test.rs  # 27 tests across all modules
+    └── integration_test.rs  # 29 tests across all modules
 ```
 
 ---
@@ -228,6 +188,9 @@ Add to your `claude_desktop_config.json`:
       "command": "/absolute/path/to/sovereign-prompt/target/release/sovereign-prompt",
       "env": {
         "SOVEREIGN_DB_PATH": "/absolute/path/to/sovereign_prompt.db",
+        "SOVEREIGN_MCP_TRANSPORT": "stdio",
+        "SOVEREIGN_MCP_SSE_ADDR": "127.0.0.1:8790",
+        "SOVEREIGN_DASHBOARD_ADDR": "127.0.0.1:8787",
         "RUST_LOG": "info"
       }
     }
@@ -235,14 +198,46 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-### 3. Run Tests
+### 3. Open Dashboard
+
+Once the server starts, open:
+
+```text
+http://127.0.0.1:8787
+```
+
+Live stream endpoint:
+
+```text
+ws://127.0.0.1:8787/ws/analytics/<user_id>
+```
+
+Dashboard-only mode (without MCP client initialization):
+
+```bash
+SOVEREIGN_DASHBOARD_ONLY=1 cargo run
+```
+
+### 4. Run MCP Over SSE (Optional)
+
+```bash
+SOVEREIGN_MCP_TRANSPORT=sse SOVEREIGN_MCP_SSE_ADDR=127.0.0.1:8790 cargo run
+```
+
+SSE endpoint for MCP clients:
+
+```text
+http://127.0.0.1:8790/sse
+```
+
+### 5. Run Tests
 
 ```bash
 cargo test
 ```
 
 ```
-running 27 tests
+running 29 tests
 test analyzer_detects_vagueness ... ok
 test analyzer_detects_politeness ... ok
 test analyzer_detects_prompt_injection ... ok
@@ -251,7 +246,7 @@ test optimizer_generates_three_variants ... ok
 test db_insert_and_query_stats ... ok
 test db_top_issues_populated ... ok
 ...
-test result: ok. 27 passed; 0 failed
+test result: ok. 29 passed; 0 failed
 ```
 
 ---
@@ -262,6 +257,8 @@ test result: ok. 27 passed; 0 failed
 CREATE TABLE IF NOT EXISTS prompts (
     id                  TEXT PRIMARY KEY,
     user_id             TEXT NOT NULL,
+    domain              TEXT NOT NULL DEFAULT 'general',
+    token_model         TEXT NOT NULL DEFAULT 'cl100k_base',
     original_prompt     TEXT NOT NULL,
     original_token_count INTEGER NOT NULL,
     refined_prompt      TEXT NOT NULL,
@@ -281,6 +278,10 @@ CREATE TABLE IF NOT EXISTS prompts (
 | Variable | Default | Description |
 |:---------|:--------|:------------|
 | `SOVEREIGN_DB_PATH` | `./sovereign_prompt.db` | Path to SQLite database file |
+| `SOVEREIGN_MCP_TRANSPORT` | `stdio` | MCP transport mode: `stdio` or `sse` |
+| `SOVEREIGN_MCP_SSE_ADDR` | `127.0.0.1:8790` | SSE bind address when `SOVEREIGN_MCP_TRANSPORT=sse` |
+| `SOVEREIGN_DASHBOARD_ADDR` | `127.0.0.1:8787` | Dashboard + WebSocket bind address |
+| `SOVEREIGN_DASHBOARD_ONLY` | `false` | If true, run only the dashboard server and skip MCP transport startup |
 | `RUST_LOG` | _(none)_ | Tracing filter level (`info`, `debug`, `trace`) |
 
 ---
@@ -289,10 +290,10 @@ CREATE TABLE IF NOT EXISTS prompts (
 
 - [ ] ExecLayer SovereignClaw governance integration
 - [ ] Cryptographic execution binding and audit trails
-- [ ] Prompt template library with per-domain optimization
-- [ ] Multi-model token counting (o200k_base, etc.)
-- [ ] WebSocket transport support
-- [ ] Dashboard UI for analytics
+- [x] Prompt template library with per-domain optimization
+- [x] Multi-model token counting (o200k_base, etc.)
+- [x] WebSocket transport support
+- [x] Dashboard UI for analytics
 
 ---
 

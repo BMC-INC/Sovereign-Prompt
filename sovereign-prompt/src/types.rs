@@ -1,11 +1,14 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptRecord {
     pub id: String,
     pub user_id: String,
+    pub domain: String,
+    pub token_model: String,
     pub original_prompt: String,
     pub original_token_count: i64,
     pub refined_prompt: String,
@@ -26,9 +29,30 @@ impl PromptRecord {
         refined_token_count: i64,
         analysis_feedback: serde_json::Value,
     ) -> Self {
+        Self::new_with_context(
+            user_id,
+            "general".to_string(),
+            "cl100k_base".to_string(),
+            original_prompt,
+            original_token_count,
+            refined_prompt,
+            refined_token_count,
+            analysis_feedback,
+        )
+    }
+
+    pub fn new_with_context(
+        user_id: String,
+        domain: String,
+        token_model: String,
+        original_prompt: String,
+        original_token_count: i64,
+        refined_prompt: String,
+        refined_token_count: i64,
+        analysis_feedback: serde_json::Value,
+    ) -> Self {
         let savings = if original_token_count > 0 {
-            ((original_token_count - refined_token_count) as f64
-                / original_token_count as f64)
+            ((original_token_count - refined_token_count) as f64 / original_token_count as f64)
                 * 100.0
         } else {
             0.0
@@ -37,6 +61,8 @@ impl PromptRecord {
         Self {
             id: Uuid::new_v4().to_string(),
             user_id,
+            domain,
+            token_model,
             original_prompt,
             original_token_count,
             refined_prompt,
@@ -53,13 +79,31 @@ impl PromptRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizeResponse {
     pub prompt_id: String,
+    pub domain: String,
+    pub token_model: String,
     pub original_prompt: String,
     pub original_token_count: i64,
     pub refined_prompt: String,
     pub refined_token_count: i64,
     pub savings_percentage: f64,
+    pub token_counts_by_model: BTreeMap<String, ModelTokenSummary>,
+    pub template: PromptTemplateSummary,
     pub feedback: Vec<FeedbackItem>,
     pub variants: Vec<PromptVariant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelTokenSummary {
+    pub original_token_count: i64,
+    pub refined_token_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTemplateSummary {
+    pub domain: String,
+    pub template_name: String,
+    pub strategy: String,
+    pub constraints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

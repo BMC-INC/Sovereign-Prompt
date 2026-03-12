@@ -25,7 +25,10 @@ impl PromptOptimizer {
         let mut refined = politeness_regex().replace_all(prompt, "").to_string();
 
         // Normalize whitespace
-        refined = whitespace_regex().replace_all(&refined, " ").trim().to_string();
+        refined = whitespace_regex()
+            .replace_all(&refined, " ")
+            .trim()
+            .to_string();
 
         // Append format instruction if missing
         let has_critical = feedback
@@ -46,6 +49,14 @@ impl PromptOptimizer {
     }
 
     pub fn generate_variants(prompt: &str, tokenizer: &Tokenizer) -> Vec<PromptVariant> {
+        Self::generate_variants_with_model(prompt, tokenizer, crate::tokenizer::DEFAULT_TOKEN_MODEL)
+    }
+
+    pub fn generate_variants_with_model(
+        prompt: &str,
+        tokenizer: &Tokenizer,
+        model: &str,
+    ) -> Vec<PromptVariant> {
         let precision_text = format!("{} Be exact, technical, and minimal.", prompt);
         let creative_text = format!("{} Think broadly and explore multiple angles.", prompt);
         let concise_text: String = prompt
@@ -58,19 +69,25 @@ impl PromptOptimizer {
             PromptVariant {
                 label: "Precision".to_string(),
                 prompt: precision_text.clone(),
-                token_count: tokenizer.count(&precision_text),
+                token_count: tokenizer
+                    .count_for_model(model, &precision_text)
+                    .unwrap_or_else(|| tokenizer.count(&precision_text)),
                 use_case: "Engineering, code generation, structured output".to_string(),
             },
             PromptVariant {
                 label: "Creative".to_string(),
                 prompt: creative_text.clone(),
-                token_count: tokenizer.count(&creative_text),
+                token_count: tokenizer
+                    .count_for_model(model, &creative_text)
+                    .unwrap_or_else(|| tokenizer.count(&creative_text)),
                 use_case: "Brainstorming, ideation, content generation".to_string(),
             },
             PromptVariant {
                 label: "Concise".to_string(),
                 prompt: concise_text.clone(),
-                token_count: tokenizer.count(&concise_text),
+                token_count: tokenizer
+                    .count_for_model(model, &concise_text)
+                    .unwrap_or_else(|| tokenizer.count(&concise_text)),
                 use_case: "Quick lookups, simple commands, minimal context".to_string(),
             },
         ]

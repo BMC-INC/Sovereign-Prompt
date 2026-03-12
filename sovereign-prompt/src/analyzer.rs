@@ -22,9 +22,20 @@ impl PromptAnalyzer {
 
 fn check_vagueness(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
     let vague_terms = [
-        "something", "somehow", "kind of", "sort of", "maybe",
-        "perhaps", "possibly", "might", "stuff", "things", "etc",
-        "and so on", "whatever", "anything",
+        "something",
+        "somehow",
+        "kind of",
+        "sort of",
+        "maybe",
+        "perhaps",
+        "possibly",
+        "might",
+        "stuff",
+        "things",
+        "etc",
+        "and so on",
+        "whatever",
+        "anything",
     ];
     let lower = prompt.to_lowercase();
     let found: Vec<&str> = vague_terms
@@ -38,9 +49,7 @@ fn check_vagueness(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
             category: "Clarity".to_string(),
             severity: Severity::Warning,
             message: format!("Vague language detected: {}", found.join(", ")),
-            suggestion: Some(
-                "Replace vague terms with specific, measurable language.".to_string(),
-            ),
+            suggestion: Some("Replace vague terms with specific, measurable language.".to_string()),
         });
     }
 }
@@ -75,7 +84,9 @@ fn check_redundancy(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
 }
 
 fn check_missing_context(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
-    let action_words = ["fix", "update", "change", "modify", "edit", "improve", "make"];
+    let action_words = [
+        "fix", "update", "change", "modify", "edit", "improve", "make",
+    ];
     let lower = prompt.to_lowercase();
     let has_action = action_words.iter().any(|w| lower.contains(w));
     let has_specifics = prompt.len() > 50;
@@ -95,8 +106,13 @@ fn check_missing_context(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
 
 fn check_politeness_tokens(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
     let polite_terms = [
-        "please", "kindly", "could you", "would you mind",
-        "if you don't mind", "thank you", "thanks",
+        "please",
+        "kindly",
+        "could you",
+        "would you mind",
+        "if you don't mind",
+        "thank you",
+        "thanks",
     ];
     let lower = prompt.to_lowercase();
     let found: Vec<&str> = polite_terms
@@ -110,9 +126,7 @@ fn check_politeness_tokens(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
             category: "Token Efficiency".to_string(),
             severity: Severity::Info,
             message: format!("Politeness tokens detected: {}", found.join(", ")),
-            suggestion: Some(
-                "LLMs don't require politeness. Remove to save tokens.".to_string(),
-            ),
+            suggestion: Some("LLMs don't require politeness. Remove to save tokens.".to_string()),
         });
     }
 }
@@ -139,14 +153,23 @@ fn check_prompt_injection(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
         feedback.push(FeedbackItem {
             category: "Security".to_string(),
             severity: Severity::Critical,
-            message: format!("Potential prompt injection pattern detected: {}", found.join(", ")),
+            message: format!(
+                "Potential prompt injection pattern detected: {}",
+                found.join(", ")
+            ),
             suggestion: Some("Review prompt for injection risks before submission.".to_string()),
         });
     }
 }
 
 fn check_task_separation(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
-    let conjunctions = ["and then", "also", "additionally", "furthermore", "as well as"];
+    let conjunctions = [
+        "and then",
+        "also",
+        "additionally",
+        "furthermore",
+        "as well as",
+    ];
     let lower = prompt.to_lowercase();
     let count = conjunctions.iter().filter(|c| lower.contains(*c)).count();
 
@@ -164,8 +187,16 @@ fn check_task_separation(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
 
 fn check_output_format(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
     let format_signals = [
-        "list", "table", "json", "markdown", "bullet", "numbered",
-        "summary", "paragraph", "code", "csv",
+        "list",
+        "table",
+        "json",
+        "markdown",
+        "bullet",
+        "numbered",
+        "summary",
+        "paragraph",
+        "code",
+        "csv",
     ];
     let lower = prompt.to_lowercase();
     let has_format = format_signals.iter().any(|f| lower.contains(f));

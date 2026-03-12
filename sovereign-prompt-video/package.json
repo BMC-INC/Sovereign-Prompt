@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "studio": "remotion studio src/index.tsx",
-    "render": "remotion render src/index.tsx SovereignPrompt out/SovereignPrompt.mp4"
+    "render": "remotion render src/index.tsx SovereignPrompt out/SovereignPrompt.mp4",
+    "render:readme": "mkdir -p ../sovereign-prompt/assets && remotion render src/index.tsx HowItWorksGraphic ../sovereign-prompt/assets/how-it-works.raw.gif --codec=gif && remotion render src/index.tsx OptimizationPipelineGraphic ../sovereign-prompt/assets/optimization-pipeline.raw.gif --codec=gif && ffmpeg -y -i ../sovereign-prompt/assets/how-it-works.raw.gif -vf 'fps=16,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=96[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4' ../sovereign-prompt/assets/how-it-works.gif >/dev/null 2>&1 && ffmpeg -y -i ../sovereign-prompt/assets/optimization-pipeline.raw.gif -vf 'fps=16,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=96[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4' ../sovereign-prompt/assets/optimization-pipeline.gif >/dev/null 2>&1 && rm -f ../sovereign-prompt/assets/*.raw.gif"
   },
   "keywords": [],
   "author": "",
