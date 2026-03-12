@@ -20,9 +20,8 @@ Built by [ExecLayer Inc.](https://github.com/BMC-INC)
 
 <br>
 
-<a href="https://github.com/BMC-INC/Sovereign-Prompt/releases/download/v0.1.0/SovereignPrompt.mp4">
-<img src="https://img.shields.io/badge/Watch%20Demo-▶%20SovereignPrompt-6c5ce7?style=for-the-badge&logoColor=white" alt="Watch Demo" />
-</a>
+https://github.com/user-attachments/assets/d97c8d87-2787-4d1d-992f-8dc7767d108b
+
 
 <br>
 
