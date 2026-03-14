@@ -12,6 +12,15 @@ fn politeness_regex() -> &'static Regex {
     })
 }
 
+fn injection_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)(ignore previous|ignore all|disregard|forget everything|new instruction|system:|assistant:|jailbreak)"
+        ).unwrap()
+    })
+}
+
 fn whitespace_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\s{2,}").unwrap())
@@ -46,6 +55,15 @@ impl PromptOptimizer {
         }
 
         refined
+    }
+
+    /// Strip injection patterns from a prompt (used in rewrite mode)
+    pub fn strip_injection_patterns(prompt: &str) -> String {
+        let stripped = injection_regex().replace_all(prompt, "").to_string();
+        whitespace_regex()
+            .replace_all(&stripped, " ")
+            .trim()
+            .to_string()
     }
 
     pub fn generate_variants(prompt: &str, tokenizer: &Tokenizer) -> Vec<PromptVariant> {

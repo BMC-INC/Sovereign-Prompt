@@ -1,4 +1,4 @@
-use crate::types::{AuditLogEntry, PromptRecord, UserStats};
+use crate::types::{AuditLogEntry, CostEstimate, DailyTrend, PromptRecord, SavingsReport, UserStats};
 use anyhow::Result;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Row, SqlitePool};
@@ -357,6 +357,139 @@ impl Database {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    pub async fn get_savings_report(
+        &self,
+        user_id: &str,
+        period: &str,
+        cost_rates: Option<&[(String, f64)]>,
+    ) -> Result<SavingsReport> {
+        let days = match period {
+            "7d" => 7,
+            "30d" => 30,
+            "90d" => 90,
+            "all" => 36500, // ~100 years
+            _ => 30,
+        };
+
+        let date_filter = chrono::Utc::now() - chrono::Duration::days(days);
+        let date_str = date_filter.to_rfc3339();
+
+        // Aggregate totals
+        let row = sqlx::query(
+            "SELECT
+                COUNT(*) as total_prompts,
+                COALESCE(SUM(original_token_count), 0) as total_original,
+                COALESCE(SUM(refined_token_count), 0) as total_refined,
+                COALESCE(SUM(original_token_count - refined_token_count), 0) as total_saved,
+                COALESCE(AVG(savings_percentage), 0.0) as avg_savings
+            FROM prompts
+            WHERE user_id = ? AND created_at >= ?",
+        )
+        .bind(user_id)
+        .bind(&date_str)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let total_prompts: i64 = row.get("total_prompts");
+        let total_original: i64 = row.get("total_original");
+        let total_refined: i64 = row.get("total_refined");
+        let total_saved: i64 = row.get("total_saved");
+        let avg_savings: f64 = row.get("avg_savings");
+
+        // Default cost rates per 1M input tokens
+        let default_rates: Vec<(String, f64)> = vec![
+            ("Claude Sonnet 4".to_string(), 3.00),
+            ("Claude Opus 4".to_string(), 15.00),
+            ("GPT-4o".to_string(), 2.50),
+            ("GPT-4o-mini".to_string(), 0.15),
+        ];
+        let rates = cost_rates.unwrap_or(&default_rates);
+
+        let cost_estimates: Vec<CostEstimate> = rates
+            .iter()
+            .map(|(model, rate)| {
+                let original_cost = (total_original as f64 / 1_000_000.0) * rate;
+                let refined_cost = (total_refined as f64 / 1_000_000.0) * rate;
+                CostEstimate {
+                    model: model.clone(),
+                    rate_per_million: *rate,
+                    original_cost,
+                    refined_cost,
+                    savings: original_cost - refined_cost,
+                }
+            })
+            .collect();
+
+        // Top issues
+        let feedback_rows = sqlx::query(
+            "SELECT analysis_feedback FROM prompts WHERE user_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 100",
+        )
+        .bind(user_id)
+        .bind(&date_str)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut category_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for frow in &feedback_rows {
+            let feedback_str: String = frow.get("analysis_feedback");
+            if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&feedback_str) {
+                for item in items {
+                    if let Some(cat) = item.get("category").and_then(|c| c.as_str()) {
+                        *category_counts.entry(cat.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        let mut top: Vec<(String, usize)> = category_counts.into_iter().collect();
+        top.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_issues: Vec<String> = top
+            .into_iter()
+            .take(5)
+            .map(|(cat, count)| format!("{} ({})", cat, count))
+            .collect();
+
+        // Daily trend
+        let trend_rows = sqlx::query(
+            "SELECT
+                DATE(created_at) as day,
+                COUNT(*) as prompts,
+                COALESCE(SUM(original_token_count - refined_token_count), 0) as tokens_saved,
+                COALESCE(AVG(savings_percentage), 0.0) as avg_savings
+            FROM prompts
+            WHERE user_id = ? AND created_at >= ?
+            GROUP BY DATE(created_at)
+            ORDER BY day ASC",
+        )
+        .bind(user_id)
+        .bind(&date_str)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let daily_trend: Vec<DailyTrend> = trend_rows
+            .into_iter()
+            .map(|r| DailyTrend {
+                date: r.get("day"),
+                prompts: r.get("prompts"),
+                tokens_saved: r.get("tokens_saved"),
+                savings_percentage: r.get("avg_savings"),
+            })
+            .collect();
+
+        Ok(SavingsReport {
+            user_id: user_id.to_string(),
+            period: period.to_string(),
+            total_prompts,
+            total_original_tokens: total_original,
+            total_refined_tokens: total_refined,
+            total_tokens_saved: total_saved,
+            average_savings_percentage: avg_savings,
+            cost_estimates,
+            top_issues,
+            daily_trend,
+        })
     }
 
     pub async fn get_audit_trail(&self, prompt_id: &str) -> Result<Vec<AuditLogEntry>> {

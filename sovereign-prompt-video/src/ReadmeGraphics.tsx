@@ -185,44 +185,44 @@ export const HowItWorksGraphic: React.FC = () => {
         label="Client Request"
         subtitle="Incoming prompt and user context"
         color={COLORS.accentA}
-        x={50}
+        x={30}
         y={208}
         delay={12}
       />
-      <Arrow x={320} y={273} w={110} delay={24} color={COLORS.accentA} />
+      <Arrow x={280} y={273} w={80} delay={24} color={COLORS.accentA} />
       <Node
         label="Analyzer"
-        subtitle="8 heuristics identify waste and risk"
+        subtitle="9 heuristics identify waste and risk"
         color={COLORS.accentC}
-        x={430}
+        x={360}
         y={120}
         delay={34}
       />
-      <Arrow x={560} y={278} w={0} delay={0} color={COLORS.accentA} />
+      <Arrow x={490} y={278} w={0} delay={0} color={COLORS.accentA} />
       <Node
         label="Optimizer + Templates"
         subtitle="Domain-specific prompt shaping"
         color={COLORS.accentB}
-        x={430}
+        x={360}
         y={296}
         delay={48}
       />
-      <Arrow x={700} y={170} w={110} delay={62} color={COLORS.accentC} />
-      <Arrow x={700} y={344} w={110} delay={66} color={COLORS.accentB} />
+      <Arrow x={610} y={170} w={80} delay={62} color={COLORS.accentC} />
+      <Arrow x={610} y={344} w={80} delay={66} color={COLORS.accentB} />
       <Node
         label="Tokenizer"
         subtitle="Counts across cl100k/o200k/p50k/r50k"
         color={COLORS.accentD}
-        x={810}
+        x={690}
         y={208}
         delay={76}
       />
-      <Arrow x={930} y={273} w={95} delay={90} color={COLORS.accentD} />
+      <Arrow x={810} y={273} w={80} delay={90} color={COLORS.accentD} />
       <Node
         label="Persistence + Output"
         subtitle="Stored analytics + optimized response"
         color={COLORS.accentA}
-        x={1025}
+        x={890}
         y={208}
         delay={102}
       />

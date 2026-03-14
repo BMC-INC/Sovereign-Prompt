@@ -50,6 +50,7 @@ impl PromptRecord {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_context(
         user_id: String,
         domain: String,
@@ -164,4 +165,44 @@ pub struct UserStats {
     pub total_tokens_saved: i64,
     pub average_savings_percentage: f64,
     pub top_issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeuristicExplanation {
+    pub check_name: String,
+    pub fired: bool,
+    pub reason: Option<String>,
+    pub matched_patterns: Vec<String>,
+    pub threshold: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavingsReport {
+    pub user_id: String,
+    pub period: String,
+    pub total_prompts: i64,
+    pub total_original_tokens: i64,
+    pub total_refined_tokens: i64,
+    pub total_tokens_saved: i64,
+    pub average_savings_percentage: f64,
+    pub cost_estimates: Vec<CostEstimate>,
+    pub top_issues: Vec<String>,
+    pub daily_trend: Vec<DailyTrend>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEstimate {
+    pub model: String,
+    pub rate_per_million: f64,
+    pub original_cost: f64,
+    pub refined_cost: f64,
+    pub savings: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyTrend {
+    pub date: String,
+    pub prompts: i64,
+    pub tokens_saved: i64,
+    pub savings_percentage: f64,
 }

@@ -4,24 +4,18 @@
 
 <img src="https://img.shields.io/badge/RUST-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
 <img src="https://img.shields.io/badge/MCP-Native-6c5ce7?style=for-the-badge" alt="MCP Native" />
-<img src="https://img.shields.io/badge/SQLite-Persistence-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" />
-<img src="https://img.shields.io/badge/License-MIT-00cec9?style=for-the-badge" alt="MIT License" />
-<img src="https://img.shields.io/badge/Tests-45%20Passing-2ecc71?style=for-the-badge" alt="Tests Passing" />
+<img src="https://img.shields.io/badge/Zero%20Unsafe%20Code-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Zero Unsafe Code" />
+<img src="https://img.shields.io/badge/56%20Tests-2ecc71?style=for-the-badge" alt="56 Tests" />
 
 <br><br>
 
-# SovereignPrompt
+# sovereign-prompt
 
-### Stop wasting tokens. Start shipping precision.
+### Developer Reference
 
-**Real-time MCP prompt optimization engine with heuristic analysis,<br>accurate token counting, and full persistence.**
+**The Rust crate behind SovereignPrompt. This document covers architecture, module responsibilities,<br>configuration, database schema, and everything you need to contribute or extend.**
 
-Built by [ExecLayer Inc.](https://github.com/BMC-INC)
-
-<br>
-
-https://github.com/user-attachments/assets/d97c8d87-2787-4d1d-992f-8dc7767d108b
-
+For the product overview, see the [root README](../README.md).
 
 <br>
 
@@ -29,240 +23,128 @@ https://github.com/user-attachments/assets/d97c8d87-2787-4d1d-992f-8dc7767d108b
 
 ---
 
-## The Problem
-
-Every prompt you send to an LLM costs tokens. Most prompts are bloated with politeness filler, vague language, redundant phrasing, and missing structure. You're paying for noise.
+## Architecture at a Glance
 
 ```
-"Hey, could you please kindly help me out and maybe possibly write
- something that sort of fixes the thing with the stuff? Thank you
- so much! Also additionally can you do the other thing as well?"
+                    ┌──────────────────────────────────────────────┐
+                    │              MCP Client Request              │
+                    └──────────────────┬───────────────────────────┘
+                                       │
+                              ┌────────▼────────┐
+                              │   server.rs      │  12 MCP tools, schema validation,
+                              │   (entry point)  │  injection mode routing
+                              └──┬──────┬──────┬─┘
+                                 │      │      │
+                    ┌────────────▼┐  ┌──▼───┐  ├──────────────┐
+                    │ analyzer.rs │  │opt.rs│  │ templates.rs  │
+                    │ 9 checks    │  │refine│  │ 7 domains     │
+                    │ + explain   │  │strip │  │ + constraints │
+                    └──────┬──────┘  └──┬───┘  └──────┬────────┘
+                           │            │             │
+                    ┌──────▼────────────▼─────────────▼──────┐
+                    │            tokenizer.rs                 │
+                    │   cl100k / o200k / p50k / r50k          │
+                    └──────────────────┬──────────────────────┘
+                                       │
+              ┌────────────────────────┼────────────────────────┐
+              │                        │                        │
+       ┌──────▼──────┐         ┌───────▼──────┐         ┌──────▼──────┐
+       │  crypto.rs   │         │    db.rs      │         │governance.rs│
+       │ SHA-256      │         │ SQLite CRUD   │         │ PII/cred    │
+       │ HMAC-SHA256  │         │ audit trail   │         │ detection   │
+       └──────────────┘         │ savings rpt   │         └─────────────┘
+                                └───────────────┘
 ```
 
-**That's 50+ tokens of pure waste.** SovereignPrompt catches it, strips it, and rewrites it before it ever hits the model.
+The entire pipeline is **deterministic** — no randomness, no LLM calls, no network egress. Same input always produces the same output. This makes it testable, auditable, and predictable.
 
 ---
 
-## How It Works
+## Module Breakdown
 
-![How It Works Animation](./assets/how-it-works.gif)
-
-Color animated flow rendered with Remotion. Covers request intake, heuristics, domain templates, multi-model tokenization, and persistence.
-
----
-
-## Features
-
-<table>
-<tr>
-<td width="50%">
-
-**Heuristic Prompt Analysis**
-9 specialized checks run on every prompt — vagueness, redundancy, missing context, politeness tokens, prompt injection, task separation, output format, and ambiguous pronouns. Each returns severity-graded feedback with actionable suggestions.
-
-</td>
-<td width="50%">
-
-**Accurate Token Counting**
-Uses `tiktoken-rs` with `cl100k_base`, `o200k_base`, `p50k_base`, and `r50k_base`. Every optimization reports exact before/after counts for the selected model plus a full cross-model matrix.
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-**3 Prompt Variants Per Request**
-Every optimization generates three tailored variants — **Precision** (technical, minimal), **Creative** (exploratory, multi-angle), and **Concise** (stripped to essentials) — each with its own token count.
-
-</td>
-<td width="50%">
-
-**Template Library + Live Dashboard**
-Per-domain prompt templates (`backend`, `frontend`, `data`, `security`, `product`, `documentation`) are applied before final output. A built-in Axum dashboard streams live analytics over WebSockets.
-
-</td>
-</tr>
-</table>
+| Module | Lines | Responsibility |
+|:-------|------:|:---------------|
+| `server.rs` | ~600 | MCP `ServerHandler` impl. 12 tools with JSON schema validation. Routes injection modes (warn/rewrite/reject). Bridges analyzer, optimizer, templates, tokenizer, crypto, governance, and DB. |
+| `analyzer.rs` | ~350 | 9 heuristic checks, each accepting `&HeuristicsConfig`. `analyze()` for backward compat, `analyze_with_config()` for runtime config, `analyze_explained()` for full transparency mode. |
+| `optimizer.rs` | ~110 | Politeness stripping via compiled regex (`OnceLock`). Whitespace normalization. Format instruction injection. 3-variant generation (Precision/Creative/Concise). Injection pattern stripping for rewrite mode. |
+| `config.rs` | ~120 | `SovereignConfig` deserialized from TOML. `HeuristicsConfig` with per-check toggles, 5 thresholds, custom pattern lists. `InjectionMode` enum (Warn/Rewrite/Reject). Loads from `SOVEREIGN_CONFIG_PATH` env or `./sovereign_prompt.toml`, falls back to sane defaults. |
+| `db.rs` | ~500 | Async SQLite via `sqlx`. Schema migration with backward-compatible `ALTER TABLE` upgrades. CRUD for prompts, output capture, governance status, signatures. `get_savings_report()` with date filtering, daily aggregation, and multi-model cost estimates. |
+| `types.rs` | ~210 | All data structures: `PromptRecord`, `OptimizeResponse`, `FeedbackItem`, `Severity`, `PromptVariant`, `AuditLogEntry`, `UserStats`, `HeuristicExplanation`, `SavingsReport`, `CostEstimate`, `DailyTrend`. |
+| `templates.rs` | ~120 | 7 domain templates (general, backend, frontend, data, security, product, documentation). Each applies domain-specific constraints to refined prompts. |
+| `tokenizer.rs` | ~50 | Wraps `tiktoken-rs`. Supports 4 models. `count()`, `count_for_model()`, `count_across_models()`. |
+| `crypto.rs` | ~70 | `CryptoEngine` for HMAC-SHA256 signing/verification. Static methods for SHA-256 content hashing, output hashing, and hash chain verification. |
+| `governance.rs` | ~110 | Policy v1.0.0 with regex-based detection: SSN, credit cards, credentials, PII references. `determine_status()` maps severity to approved/pending/rejected. |
+| `dashboard.rs` | ~350 | Axum web server. Embedded HTML dashboard with dark theme. REST API (`/api/stats`, `/api/history`). WebSocket stream (`/ws/analytics`) updating every 2s. |
+| `main.rs` | ~75 | Entry point. Loads `.env`, inits DB, spawns dashboard, selects transport (stdio/SSE/dashboard-only), handles graceful shutdown. |
+| `lib.rs` | ~12 | `#![deny(unsafe_code)]` + module re-exports. |
 
 ---
 
-## MCP Tools
-
-| Tool | Description | Key Parameters |
-|:-----|:------------|:---------------|
-| **`optimize_prompt`** | Analyze and refine a prompt with optional domain templates and model-selectable token counting. | `prompt` (required), `user_id` (optional), `domain` (optional), `token_model` (optional) |
-| **`capture_output`** | Store the AI's response against a prompt ID for output tracking and learning. | `prompt_id`, `output`, `token_model` (optional) |
-| **`get_stats`** | Retrieve per-user optimization metrics — total prompts, tokens saved, average savings, top issues. | `user_id` |
-| **`get_history`** | Fetch recent prompt history with full refinement data. | `user_id`, `limit` (max 50) |
-| **`list_templates`** | List available optimization domains in the template library. | _none_ |
-| **`count_tokens`** | Count tokens for text using one model or all supported models. | `text` (required), `model` (optional) |
-| **`governance_check`** | Validate a stored prompt against governance policies. | `prompt_id` |
-| **`governance_approve`** | Approve or reject a prompt optimization with actor tracking. | `prompt_id`, `actor`, `status` |
-| **`get_audit_trail`** | Retrieve the governance audit trail for a prompt. | `prompt_id` |
-| **`sign_optimization`** | Cryptographically sign a prompt optimization record (HMAC-SHA256). | `prompt_id` |
-| **`verify_signature`** | Verify the cryptographic signature and hash chain of a prompt record. | `prompt_id` |
-
----
-
-## 9 Heuristic Checks
-
-| Check | Severity | What It Catches |
-|:------|:---------|:----------------|
-| **Vagueness Detection** | Warning | `"something"`, `"stuff"`, `"kind of"`, `"maybe"`, `"whatever"` — 14 vague terms |
-| **Redundancy Analysis** | Info | Words repeated 3+ times in a single prompt |
-| **Missing Context** | Critical | Action verbs (`fix`, `update`, `change`) with insufficient detail (<50 chars) |
-| **Politeness Tokens** | Info | `"please"`, `"kindly"`, `"could you"`, `"thank you"` — 7 filler patterns |
-| **Prompt Injection** | Critical | `"ignore previous"`, `"forget everything"`, `"system:"`, `"jailbreak"` — 8 patterns |
-| **Task Separation** | Warning | Multiple conjunctions (`"and then"`, `"additionally"`, `"as well as"`) indicating bundled tasks |
-| **Output Format** | Info | No format signal detected (`json`, `list`, `table`, `code`, etc.) in prompts >30 chars |
-| **Ambiguous Pronouns** | Warning | 3+ unresolved pronouns (`"it"`, `"this"`, `"they"`, `"those"`) in a single prompt |
-| **Governance Policy** | Critical/Warning | SSN patterns, credit card numbers, API keys/credentials, PII references (`"social security"`, `"date of birth"`, etc.) |
-
----
-
-## Optimization Pipeline
-
-![Optimization Pipeline Animation](./assets/optimization-pipeline.gif)
-
-Animated stages: analysis -> domain template injection -> refinement -> variant generation -> multi-model token matrix.
-
----
-
-## Tech Stack
-
-| Component | Crate | Purpose |
-|:----------|:------|:--------|
-| **MCP Transport** | `rmcp 0.1` | Native MCP server over `stdio` (default) or network `SSE` transport |
-| **Tokenizer** | `tiktoken-rs 0.5` | Multi-model counts (`cl100k_base`, `o200k_base`, `p50k_base`, `r50k_base`) |
-| **Database** | `sqlx 0.7` | Async SQLite with runtime queries, zero compile-time DB needed |
-| **Dashboard + WS** | `axum 0.7` | Embedded analytics dashboard with WebSocket snapshots |
-| **Runtime** | `tokio 1` | Full-featured async runtime with signal handling |
-| **Serialization** | `serde 1` + `serde_json 1` | JSON serialization for MCP protocol and persistence |
-| **Regex** | `regex 1` | Cached via `OnceLock` for politeness stripping and pronoun detection |
-| **IDs** | `uuid 1` | V4 UUIDs for prompt record identifiers |
-| **Logging** | `tracing 0.1` | Structured logging with env-filter support |
-| **Environment** | `dotenvy 0.15` | `.env` file loading at startup |
-| **Hashing** | `sha2 0.10` | SHA-256 content hashing for tamper detection |
-| **Signing** | `hmac 0.12` | HMAC-SHA256 cryptographic signing and verification |
-| **Hex Encoding** | `hex 0.4` | Hex encoding for hashes and signatures |
-
----
-
-## Project Structure
+## Data Flow — optimize_prompt
 
 ```
-sovereign-prompt/
-├── Cargo.toml
-├── .env.example
-├── .gitignore
-├── src/
-│   ├── main.rs          # Entry point — dotenv, DB init, signal handling
-│   ├── lib.rs           # Library re-exports for integration tests
-│   ├── server.rs        # MCP ServerHandler — 11 tools, schema definitions
-│   ├── analyzer.rs      # 9 heuristic checks with cached regex
-│   ├── optimizer.rs     # Politeness stripping, normalization, variant generation
-│   ├── templates.rs     # Domain template library and constraints
-│   ├── tokenizer.rs     # Model-aware token counting across 4 encodings
-│   ├── crypto.rs        # SHA-256 hashing, HMAC-SHA256 signing and verification
-│   ├── governance.rs    # Governance policy validation and approval logic
-│   ├── dashboard.rs     # Axum dashboard + WebSocket analytics stream
-│   ├── types.rs         # PromptRecord, OptimizeResponse, AuditLogEntry, FeedbackItem, UserStats
-│   └── db.rs            # SQLite — migrations, CRUD, stats, audit trail
-├── assets/
-│   ├── how-it-works.gif
-│   └── optimization-pipeline.gif
-└── tests/
-    └── integration_test.rs  # 45 tests across all modules
+1. Parse args (prompt, user_id, domain, token_model, explain_mode)
+2. Check injection mode:
+   - Reject → scan for patterns, return error if found
+   - Rewrite → strip injection patterns via regex
+   - Warn → pass through unchanged
+3. Count original tokens (selected model)
+4. Run 9 heuristic checks against HeuristicsConfig
+   - If explain_mode: also build HeuristicExplanation for each check
+5. Refine prompt (strip politeness, normalize whitespace, add format hint)
+6. Apply domain template (constraints injected)
+7. Count refined tokens
+8. Generate 3 variants with token counts
+9. Count across all 4 tokenizer models (original + refined)
+10. Compute SHA-256 content hash
+11. Run governance check → determine approval status
+12. Persist PromptRecord to SQLite
+13. Write audit log entry
+14. Return OptimizeResponse (+ heuristic_explanations if explain_mode)
 ```
 
 ---
 
-## Quick Start
+## Configuration
 
-### 1. Build
+The config file is optional. Without it, every default is production-ready.
 
-```bash
-git clone https://github.com/BMC-INC/Sovereign-Prompt.git
-cd Sovereign-Prompt/sovereign-prompt
-cp .env.example .env
-cargo build --release
+```toml
+[heuristics]
+# Toggle individual checks
+vagueness = true
+redundancy = true
+missing_context = true
+politeness = true
+injection = true
+task_separation = true
+output_format = true
+ambiguous_pronouns = true
+governance = true
+
+# Thresholds
+redundancy_word_repeat = 3     # Flag words repeated > N times
+pronoun_threshold = 3          # Flag when pronoun count >= N
+context_min_length = 50        # Min chars for "has context"
+conjunction_threshold = 2      # Flag when conjunction count >= N
+format_min_length = 30         # Min chars before flagging missing format
+
+# Extend built-in patterns
+# extra_vague_terms = ["unclear"]
+# extra_injection_patterns = ["bypass safety"]
+# extra_polite_terms = ["excuse me"]
+
+[injection]
+mode = "warn"  # "warn" | "rewrite" | "reject"
 ```
 
-### 2. Configure MCP Client
-
-Add to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "sovereign-prompt": {
-      "command": "/absolute/path/to/sovereign-prompt/target/release/sovereign-prompt",
-      "env": {
-        "SOVEREIGN_DB_PATH": "/absolute/path/to/sovereign_prompt.db",
-        "SOVEREIGN_MCP_TRANSPORT": "stdio",
-        "SOVEREIGN_MCP_SSE_ADDR": "127.0.0.1:8790",
-        "SOVEREIGN_DASHBOARD_ADDR": "127.0.0.1:8787",
-        "RUST_LOG": "info"
-      }
-    }
-  }
-}
-```
-
-### 3. Open Dashboard
-
-Once the server starts, open:
-
-```text
-http://127.0.0.1:8787
-```
-
-Live stream endpoint:
-
-```text
-ws://127.0.0.1:8787/ws/analytics/<user_id>
-```
-
-Dashboard-only mode (without MCP client initialization):
-
-```bash
-SOVEREIGN_DASHBOARD_ONLY=1 cargo run
-```
-
-### 4. Run MCP Over SSE (Optional)
-
-```bash
-SOVEREIGN_MCP_TRANSPORT=sse SOVEREIGN_MCP_SSE_ADDR=127.0.0.1:8790 cargo run
-```
-
-SSE endpoint for MCP clients:
-
-```text
-http://127.0.0.1:8790/sse
-```
-
-### 5. Run Tests
-
-```bash
-cargo test
-```
-
-```
-running 45 tests
-test analyzer_detects_vagueness ... ok
-test analyzer_detects_politeness ... ok
-test analyzer_detects_prompt_injection ... ok
-test optimizer_strips_politeness ... ok
-test optimizer_generates_three_variants ... ok
-test db_insert_and_query_stats ... ok
-test db_top_issues_populated ... ok
-...
-test result: ok. 45 passed; 0 failed
-```
+**Loading priority:** `SOVEREIGN_CONFIG_PATH` env var > `./sovereign_prompt.toml` > built-in defaults.
 
 ---
 
 ## SQLite Schema
+
+Two tables with backward-compatible schema upgrades (`ALTER TABLE` with duplicate-column guards):
 
 ```sql
 CREATE TABLE IF NOT EXISTS prompts (
@@ -275,27 +157,90 @@ CREATE TABLE IF NOT EXISTS prompts (
     refined_prompt      TEXT NOT NULL,
     refined_token_count INTEGER NOT NULL,
     savings_percentage  REAL NOT NULL,
-    analysis_feedback   TEXT NOT NULL,       -- JSON array
+    analysis_feedback   TEXT NOT NULL,       -- JSON array of FeedbackItem
     output              TEXT,                -- captured AI response
     output_token_count  INTEGER,
     created_at          TEXT NOT NULL,       -- RFC 3339
-    governance_id       TEXT,                -- governance context UUID
-    policy_version      TEXT,                -- governance policy version
+    governance_id       TEXT,                -- UUID linking governance context
+    policy_version      TEXT,                -- e.g. "v1.0.0"
     approval_status     TEXT,                -- pending | approved | rejected
-    content_hash        TEXT,                -- SHA-256(original || refined)
+    content_hash        TEXT,                -- SHA-256(original || "||" || refined)
     output_hash         TEXT,                -- SHA-256(output)
-    signature           TEXT,                -- HMAC-SHA256 signature
+    signature           TEXT,                -- HMAC-SHA256 hex signature
     signed_at           TEXT                 -- RFC 3339 signing timestamp
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id                  TEXT PRIMARY KEY,
-    prompt_id           TEXT NOT NULL,       -- FK to prompts.id
+    prompt_id           TEXT NOT NULL,
     action              TEXT NOT NULL,       -- created | approved | rejected | signed | captured
-    actor               TEXT NOT NULL,       -- user_id or system
+    actor               TEXT NOT NULL,       -- user_id or "system"
     detail              TEXT NOT NULL,       -- JSON metadata
-    created_at          TEXT NOT NULL        -- RFC 3339
+    created_at          TEXT NOT NULL
 );
+```
+
+Indices on `user_id`, `created_at`, `prompt_id`, and `action` for query performance.
+
+---
+
+## Project Structure
+
+```
+sovereign-prompt/
+├── Cargo.toml                 # 15 deps + 1 dev-dep
+├── .env.example
+├── sovereign_prompt.toml      # Example config — all defaults shown
+├── src/
+│   ├── main.rs                # Entry: dotenv, DB, config, dashboard, transport
+│   ├── lib.rs                 # #![deny(unsafe_code)] + mod re-exports
+│   ├── server.rs              # 12 MCP tools + ServerHandler impl
+│   ├── analyzer.rs            # 9 heuristic checks + explain mode
+│   ├── optimizer.rs           # Refinement engine + injection stripping
+│   ├── config.rs              # TOML config: HeuristicsConfig, InjectionMode
+│   ├── templates.rs           # 7 domain templates
+│   ├── tokenizer.rs           # Multi-model token counting
+│   ├── crypto.rs              # SHA-256 + HMAC-SHA256
+│   ├── governance.rs          # PII/credential detection + policy engine
+│   ├── dashboard.rs           # Axum + WebSocket analytics
+│   ├── types.rs               # All data structures
+│   └── db.rs                  # SQLite: migrations, CRUD, savings reports
+├── assets/
+│   ├── how-it-works.gif
+│   └── optimization-pipeline.gif
+└── tests/
+    └── integration_test.rs    # 56 tests
+```
+
+---
+
+## Running Tests
+
+```bash
+cargo test
+```
+
+```
+running 56 tests
+test config_disabled_check_skips_analysis ... ok
+test config_custom_threshold_changes_behavior ... ok
+test config_custom_patterns_detected ... ok
+test config_injection_rewrite_strips_patterns ... ok
+test config_injection_reject_mode_detects ... ok
+test explain_mode_returns_all_nine_explanations ... ok
+test explain_mode_fired_accuracy ... ok
+test explain_mode_with_config_interaction ... ok
+test db_savings_report_query ... ok
+test db_savings_report_cost_calculation ... ok
+test db_savings_report_empty_state ... ok
+...
+test result: ok. 56 passed; 0 failed
+```
+
+Test coverage spans: tokenizer (4), analyzer (10), optimizer (6), templates (1), types (3), database (11), crypto (7), governance (5), config (5), explain mode (3), savings report (3).
+
+```bash
+cargo clippy -- -D warnings   # Zero warnings enforced
 ```
 
 ---
@@ -304,24 +249,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `SOVEREIGN_DB_PATH` | `./sovereign_prompt.db` | Path to SQLite database file |
-| `SOVEREIGN_MCP_TRANSPORT` | `stdio` | MCP transport mode: `stdio` or `sse` |
-| `SOVEREIGN_MCP_SSE_ADDR` | `127.0.0.1:8790` | SSE bind address when `SOVEREIGN_MCP_TRANSPORT=sse` |
-| `SOVEREIGN_DASHBOARD_ADDR` | `127.0.0.1:8787` | Dashboard + WebSocket bind address |
-| `SOVEREIGN_DASHBOARD_ONLY` | `false` | If true, run only the dashboard server and skip MCP transport startup |
-| `SOVEREIGN_HMAC_KEY` | _(dev default)_ | HMAC-SHA256 secret key for cryptographic signing |
-| `RUST_LOG` | _(none)_ | Tracing filter level (`info`, `debug`, `trace`) |
-
----
-
-## Roadmap
-
-- [x] ExecLayer SovereignClaw governance integration
-- [x] Cryptographic execution binding and audit trails
-- [x] Prompt template library with per-domain optimization
-- [x] Multi-model token counting (o200k_base, etc.)
-- [x] WebSocket transport support
-- [x] Dashboard UI for analytics
+| `SOVEREIGN_DB_PATH` | `./sovereign_prompt.db` | SQLite database path |
+| `SOVEREIGN_CONFIG_PATH` | `./sovereign_prompt.toml` | TOML config path |
+| `SOVEREIGN_MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `sse` |
+| `SOVEREIGN_MCP_SSE_ADDR` | `127.0.0.1:8790` | SSE bind address |
+| `SOVEREIGN_DASHBOARD_ADDR` | `127.0.0.1:8787` | Dashboard bind address |
+| `SOVEREIGN_DASHBOARD_ONLY` | `false` | Dashboard-only mode (no MCP transport) |
+| `SOVEREIGN_HMAC_KEY` | _(dev default)_ | HMAC signing key |
+| `RUST_LOG` | _(none)_ | `info`, `debug`, `trace` |
 
 ---
 
@@ -329,9 +264,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 <br>
 
-**SovereignPrompt** is built by [ExecLayer Inc.](https://github.com/BMC-INC)
-
-MIT License
+Built by [**ExecLayer Inc.**](https://github.com/BMC-INC) &#8226; MIT License
 
 <br>
 

@@ -1,4 +1,7 @@
+#![deny(unsafe_code)]
+
 pub mod analyzer;
+pub mod config;
 pub mod crypto;
 pub mod dashboard;
 pub mod db;

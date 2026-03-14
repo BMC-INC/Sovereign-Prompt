@@ -1,4 +1,5 @@
 use crate::analyzer::PromptAnalyzer;
+use crate::config::{InjectionMode, SovereignConfig};
 use crate::crypto::CryptoEngine;
 use crate::db::Database;
 use crate::governance::GovernancePolicy;
@@ -22,6 +23,7 @@ pub struct SovereignPromptServer {
     db: Arc<Database>,
     tokenizer: Arc<Tokenizer>,
     crypto: Arc<CryptoEngine>,
+    config: Arc<SovereignConfig>,
 }
 
 impl SovereignPromptServer {
@@ -49,6 +51,10 @@ impl SovereignPromptServer {
                             "prompt": {
                                 "type": "string",
                                 "description": "The prompt to optimize"
+                            },
+                            "explain_mode": {
+                                "type": "boolean",
+                                "description": "When true, returns detailed heuristic explanations for each of the 9 checks"
                             }
                         },
                         "required": ["prompt"]
@@ -244,6 +250,27 @@ impl SovereignPromptServer {
                     .unwrap(),
                 ),
             ),
+            Tool::new(
+                "savings_report",
+                "Generate a cost savings report with token metrics, cost estimates across models, and daily trends.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "user_id": {
+                                "type": "string",
+                                "description": "User ID to generate report for"
+                            },
+                            "period": {
+                                "type": "string",
+                                "description": "Time period: 7d, 30d, 90d, or all (default: 30d)"
+                            }
+                        },
+                        "required": ["user_id"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
         ]
     }
 
@@ -268,6 +295,11 @@ impl SovereignPromptServer {
             .unwrap_or(DEFAULT_TOKEN_MODEL)
             .to_string();
 
+        let explain_mode = args
+            .get("explain_mode")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         if !self.tokenizer.is_supported_model(&token_model) {
             return Err(ErrorData::invalid_params(
                 format!(
@@ -279,12 +311,42 @@ impl SovereignPromptServer {
             ));
         }
 
+        // Check injection mode
+        let working_prompt = match self.config.injection.mode {
+            InjectionMode::Reject => {
+                // Check for injection patterns before proceeding
+                let injection_feedback =
+                    PromptAnalyzer::analyze_with_config(&prompt, &self.config.heuristics);
+                let has_injection = injection_feedback
+                    .iter()
+                    .any(|f| f.category == "Security");
+                if has_injection {
+                    return Err(ErrorData::invalid_params(
+                        "Prompt rejected: injection pattern detected. Injection mode is set to 'reject'.",
+                        None,
+                    ));
+                }
+                prompt.clone()
+            }
+            InjectionMode::Rewrite => {
+                PromptOptimizer::strip_injection_patterns(&prompt)
+            }
+            InjectionMode::Warn => prompt.clone(),
+        };
+
         let original_tokens = self
             .tokenizer
             .count_for_model(&token_model, &prompt)
             .unwrap_or_default();
-        let feedback = PromptAnalyzer::analyze(&prompt);
-        let refined_base = PromptOptimizer::refine(&prompt, &feedback, &self.tokenizer);
+
+        let (feedback, explanations) = if explain_mode {
+            PromptAnalyzer::analyze_explained(&working_prompt, &self.config.heuristics)
+        } else {
+            let fb = PromptAnalyzer::analyze_with_config(&working_prompt, &self.config.heuristics);
+            (fb, Vec::new())
+        };
+
+        let refined_base = PromptOptimizer::refine(&working_prompt, &feedback, &self.tokenizer);
         let (refined, template) = PromptTemplateLibrary::apply(&domain, &refined_base);
         let refined_tokens = self
             .tokenizer
@@ -381,7 +443,15 @@ impl SovereignPromptServer {
             governance_status: Some(approval_status),
         };
 
-        let json = serde_json::to_string_pretty(&response)
+        let mut json_value = serde_json::to_value(&response)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        if explain_mode {
+            json_value["heuristic_explanations"] =
+                serde_json::to_value(&explanations).unwrap_or_default();
+        }
+
+        let json = serde_json::to_string_pretty(&json_value)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -765,6 +835,31 @@ impl SovereignPromptServer {
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
+
+    async fn handle_savings_report(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
+        let user_id = args
+            .get("user_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'user_id' parameter", None))?
+            .to_string();
+
+        let period = args
+            .get("period")
+            .and_then(|v| v.as_str())
+            .unwrap_or("30d")
+            .to_string();
+
+        let report = self
+            .db
+            .get_savings_report(&user_id, &period, None)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
 }
 
 impl ServerHandler for SovereignPromptServer {
@@ -809,6 +904,7 @@ impl ServerHandler for SovereignPromptServer {
             "get_audit_trail" => self.handle_get_audit_trail(&args).await,
             "sign_optimization" => self.handle_sign_optimization(&args).await,
             "verify_signature" => self.handle_verify_signature(&args).await,
+            "savings_report" => self.handle_savings_report(&args).await,
             _ => Err(ErrorData::invalid_params(
                 format!("unknown tool: {}", request.name),
                 None,
@@ -817,17 +913,23 @@ impl ServerHandler for SovereignPromptServer {
     }
 }
 
-pub async fn run(db: Arc<Database>) -> Result<()> {
-    let tokenizer = Tokenizer::new()?;
+fn build_server(db: Arc<Database>, config: SovereignConfig) -> SovereignPromptServer {
+    let tokenizer = Tokenizer::new().expect("failed to initialize tokenizer");
     let hmac_key = std::env::var("SOVEREIGN_HMAC_KEY")
         .unwrap_or_else(|_| "sovereign-prompt-dev-key-change-in-production".to_string());
     let crypto = Arc::new(CryptoEngine::new(hmac_key.as_bytes()));
 
-    let server = SovereignPromptServer {
+    SovereignPromptServer {
         db,
         tokenizer: Arc::new(tokenizer),
         crypto,
-    };
+        config: Arc::new(config),
+    }
+}
+
+pub async fn run(db: Arc<Database>) -> Result<()> {
+    let config = SovereignConfig::load();
+    let server = build_server(db, config);
 
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
@@ -836,16 +938,8 @@ pub async fn run(db: Arc<Database>) -> Result<()> {
 }
 
 pub async fn run_sse(db: Arc<Database>, bind: SocketAddr) -> Result<()> {
-    let tokenizer = Tokenizer::new()?;
-    let hmac_key = std::env::var("SOVEREIGN_HMAC_KEY")
-        .unwrap_or_else(|_| "sovereign-prompt-dev-key-change-in-production".to_string());
-    let crypto = Arc::new(CryptoEngine::new(hmac_key.as_bytes()));
-
-    let server = SovereignPromptServer {
-        db,
-        tokenizer: Arc::new(tokenizer),
-        crypto,
-    };
+    let config = SovereignConfig::load();
+    let server = build_server(db, config);
 
     let ct = rmcp::transport::sse_server::SseServer::serve(bind)
         .await?

@@ -1,0 +1,30 @@
+# SovereignPrompt Configuration
+# Place this file at ./sovereign_prompt.toml or set SOVEREIGN_CONFIG_PATH
+
+[heuristics]
+# Enable/disable individual checks (all default to true)
+vagueness = true
+redundancy = true
+missing_context = true
+politeness = true
+injection = true
+task_separation = true
+output_format = true
+ambiguous_pronouns = true
+governance = true
+
+# Configurable thresholds
+redundancy_word_repeat = 3       # Flag words repeated more than N times
+pronoun_threshold = 3            # Flag when pronoun count >= N
+context_min_length = 50          # Minimum chars for context check
+conjunction_threshold = 2        # Flag when conjunction count >= N
+format_min_length = 30           # Minimum chars before flagging missing format
+
+# Custom patterns (merged with built-in patterns)
+# extra_vague_terms = ["unclear", "vaguely"]
+# extra_injection_patterns = ["bypass safety"]
+# extra_polite_terms = ["excuse me"]
+
+[injection]
+# Injection handling mode: "warn", "rewrite", or "reject"
+mode = "warn"
