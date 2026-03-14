@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/ee2438e2-5f89-4dc3-8cd2-1f784a8844ab
 
 <br>
 
-[Get Started](#get-started) &#8226; [How It Works](#how-it-works) &#8226; [12 Tools](#the-toolbelt--12-mcp-tools) &#8226; [Security](./SECURITY.md) &#8226; [Inner Docs](./sovereign-prompt/README.md)
+[Get Started](#get-started) &#8226; [15 Tools](#the-toolbelt--15-mcp-tools) &#8226; [Security](./SECURITY.md) &#8226; [Developer Docs](./sovereign-prompt/README.md)
 
 <br>
 
@@ -36,39 +36,104 @@ https://github.com/user-attachments/assets/ee2438e2-5f89-4dc3-8cd2-1f784a8844ab
 
 ---
 
-## The Pitch
+## Get Started
+
+**One command to build. One config to connect. Done.**
+
+```bash
+git clone https://github.com/BMC-INC/Sovereign-Prompt.git
+cd Sovereign-Prompt/sovereign-prompt
+cargo build --release
+```
+
+Then tell your MCP client where to find the binary:
+
+<details>
+<summary><strong>Claude Desktop</strong></summary>
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "sovereign-prompt": {
+      "command": "/absolute/path/to/target/release/sovereign-prompt"
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Claude Code</strong></summary>
+
+Add to `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "sovereign-prompt": {
+      "command": "/absolute/path/to/target/release/sovereign-prompt"
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Any MCP Client (SSE)</strong></summary>
+
+```bash
+SOVEREIGN_MCP_TRANSPORT=sse ./target/release/sovereign-prompt
+```
+
+Connect at `http://127.0.0.1:8790/sse`
+
+</details>
+
+That's it. 15 tools are live. Start with:
+
+```
+optimize_prompt: { "prompt": "your prompt here" }
+```
+
+---
+
+## Why This Exists
 
 You send 100 prompts a day. Most of them are 30-60% filler — politeness tokens the model ignores, vague language that degrades output quality, redundant phrasing that burns your budget. Multiply that across a team, and you're lighting money on fire.
 
-SovereignPrompt sits between you and the model. Every prompt passes through 9 heuristic checks, gets stripped of waste, shaped by domain-specific templates, and measured across 4 tokenizer models — before a single token reaches the API. You get the refined prompt, three strategic variants, a full token savings breakdown, and a cryptographically signed audit trail. All of it stored locally. Zero cloud. Zero telemetry.
+SovereignPrompt sits between you and the model. Every prompt passes through 9 heuristic checks, gets stripped of waste, shaped by domain-specific templates, and measured across 4 tokenizer models — before a single token reaches the API. You get the refined prompt, three strategic variants, a full token savings breakdown, and a cryptographically signed audit trail.
 
 This isn't a wrapper. It's an optimization engine that speaks [MCP](https://modelcontextprotocol.io) — the open protocol that Claude Desktop, Claude Code, Cursor, and every major AI client is adopting. Plug it in once, and every prompt you send through any MCP client gets optimized automatically.
 
+No LLM in the loop. No API calls. No cloud. No latency. Pure deterministic Rust.
+
+| Feature | SovereignPrompt | Other MCP Prompt Tools |
+|:--------|:---------------:|:----------------------:|
+| Local-only, zero cloud | **Yes** | Usually sends to LLM |
+| Real token savings % with reports | **Yes** | No |
+| Cryptographic audit trail | **Yes** | No |
+| Built-in PII / governance engine | **Yes** | No |
+| Live dashboard | **Yes** | No |
+| Custom heuristic plugins | **Yes** | No |
+| Team-level analytics | **Yes** | No |
+| Learning feedback loop | **Yes** | No |
+| Pure Rust (sub-5ms) | **Yes** | Python / TS |
+
 ---
 
-## See It
+## How It Works
 
 <div align="center">
 
-![How It Works](./sovereign-prompt/assets/how-it-works.gif)
-
-*Request in. 9 checks run. Domain template applied. 4 tokenizers count. Optimized prompt out. Every step persisted.*
+![How SovereignPrompt Works](./sovereign-prompt/assets/how-it-works.gif)
 
 </div>
 
----
-
-## The Bleed Is Real
-
-```
-"Hey, could you please kindly help me out and maybe possibly write
- something that sort of fixes the thing with the stuff? Thank you
- so much! Also additionally can you do the other thing as well?"
-```
-
-That prompt has **14 vague terms**, **5 politeness tokens**, **2 task-bundling conjunctions**, **no output format**, and **zero actionable context**. SovereignPrompt catches all of it in a single pass and tells you exactly what's wrong, why it matters, and what the fix looks like.
-
-Turn on **explain mode** and you see every heuristic that fired, what it matched, and the threshold it triggered — full transparency into the optimization decisions.
+Prompt in. 9 heuristic checks run. Domain template applied. 4 tokenizers count simultaneously. Optimized prompt, 3 variants, and full analytics out. Every step persisted and hashable.
 
 ---
 
@@ -81,9 +146,9 @@ Turn on **explain mode** and you see every heuristic that fired, what it matched
 | "Would you mind kindly helping me perhaps analyze the data and maybe find some patterns or something" | "Analyze the data and find patterns. Respond concisely and directly." | **~42%** |
 | "Please could you help me plan out the tasks and then also break them down and additionally prioritize them" | "Plan tasks, break them down, prioritize. Respond concisely and directly." | **~48%** |
 
-*Measured with `cl100k_base`. Your mileage varies — bloated prompts save more, clean prompts save less. That's the point.*
+Every optimization generates **three variants** — **Precision** (tight, technical, minimal), **Creative** (broad, exploratory), and **Concise** (stripped to the bone) — each with its own token count so you can choose the right tool for the job.
 
-And for every optimization, you get **three variants** — **Precision** (tight, technical, minimal), **Creative** (broad, exploratory), and **Concise** (stripped to the bone) — each with its own token count so you can choose the right tool for the job.
+Turn on **explain mode** and you see every heuristic that fired, what it matched, and the threshold it triggered — full transparency into the optimization decisions.
 
 ---
 
@@ -96,8 +161,6 @@ And for every optimization, you get **three variants** — **Precision** (tight,
 </div>
 
 Every prompt travels through a deterministic pipeline: **heuristic analysis** catches 9 categories of waste and risk. **Domain templates** apply field-specific constraints (backend, frontend, data, security, product, documentation). **Refinement** strips filler and normalizes structure. **Variant generation** gives you three angles. **Multi-model tokenization** counts across `cl100k_base`, `o200k_base`, `p50k_base`, and `r50k_base` simultaneously. The result is persisted, hashed, and ready to sign.
-
-No LLM in the loop. No API calls. No latency. Pure deterministic Rust.
 
 ---
 
@@ -117,7 +180,7 @@ Every prompt runs through 9 heuristic checks, each tunable via a single TOML con
 | **Ambiguous Pronouns** | `warn` | "Fix it and send it there" — fix what? Send where? Pronouns without referents are token-expensive ambiguity. |
 | **Governance Policy** | `crit` | SSN patterns, credit card numbers, API keys, PII references — caught and flagged before they leave your machine. |
 
-Every check can be toggled on or off individually. Thresholds are adjustable. You can add your own patterns. The injection handler has three modes: **warn** (flag it), **rewrite** (strip it), or **reject** (block it). All configured in `sovereign_prompt.toml`.
+Every check can be toggled on or off. Thresholds are adjustable. You can add your own patterns. Define **custom heuristic plugins** with regex patterns right in the TOML config. The injection handler has three modes: **warn** (flag it), **rewrite** (strip it), or **reject** (block it).
 
 ---
 
@@ -127,6 +190,9 @@ Every check can be toggled on or off individually. Thresholds are adjustable. Yo
 |:-----|:-------------|
 | **`optimize_prompt`** | The core. Analyzes, refines, templates, generates variants, counts tokens across models. Optional `explain_mode` shows every heuristic decision. |
 | **`savings_report`** | Your ROI in numbers. Token savings, cost estimates across Claude Sonnet 4 / Opus 4 / GPT-4o / GPT-4o-mini, daily trends, and top recurring issues — over any time period. |
+| **`rate_optimization`** | Rate an optimization as positive or negative. Feeds the learning loop that tracks what works and what doesn't. |
+| **`learning_insights`** | Get learning insights from rated optimizations — best domains, satisfaction rate, and actionable recommendations. |
+| **`team_report`** | Team-level analytics aggregating savings across multiple users with per-member breakdowns and cost estimates. |
 | **`capture_output`** | Store the AI's actual response against an optimized prompt. Enables output hashing for end-to-end integrity verification. |
 | **`count_tokens`** | Count tokens for any text across all 4 supported tokenizer models, or target a single model. |
 | **`get_stats`** | Per-user aggregate metrics: total prompts, tokens saved, average savings percentage, top issues by frequency. |
@@ -137,13 +203,10 @@ Every check can be toggled on or off individually. Thresholds are adjustable. Yo
 | **`get_audit_trail`** | Every action on every prompt — creation, approval, rejection, signing, output capture — with timestamps and actors. |
 | **`sign_optimization`** | Cryptographically sign a prompt record with HMAC-SHA256. Tamper-evident, verifiable, non-repudiable. |
 | **`verify_signature`** | Verify the signature and full hash chain — content hash, output hash, and cryptographic binding. |
-| **`rate_optimization`** | Rate an optimization as positive or negative. Feeds the learning loop that tracks what works and what doesn't. |
-| **`learning_insights`** | Get learning insights from rated optimizations — best domains, satisfaction rate, and actionable recommendations. |
-| **`team_report`** | Team-level analytics aggregating savings across multiple users with per-member breakdowns and cost estimates. |
 
 ---
 
-## Security Model
+## Security
 
 SovereignPrompt is **local-only by design**. Zero outbound network calls. Zero telemetry. Zero cloud dependencies. Your prompts never leave your machine.
 
@@ -154,86 +217,6 @@ SovereignPrompt is **local-only by design**. Zero outbound network calls. Zero t
 - Injection detection with three configurable response modes
 
 Full security documentation: [`SECURITY.md`](./SECURITY.md)
-
----
-
-## Get Started
-
-**Three steps. Under two minutes.**
-
-### 1. Build
-
-```bash
-git clone https://github.com/BMC-INC/Sovereign-Prompt.git
-cd Sovereign-Prompt/sovereign-prompt
-cp .env.example .env
-cargo build --release
-```
-
-### 2. Connect
-
-<details>
-<summary><strong>Claude Desktop</strong> — add to <code>claude_desktop_config.json</code></summary>
-
-```json
-{
-  "mcpServers": {
-    "sovereign-prompt": {
-      "command": "/absolute/path/to/target/release/sovereign-prompt",
-      "env": {
-        "SOVEREIGN_DB_PATH": "/absolute/path/to/sovereign_prompt.db",
-        "SOVEREIGN_CONFIG_PATH": "/absolute/path/to/sovereign_prompt.toml",
-        "SOVEREIGN_HMAC_KEY": "your-secret-key",
-        "RUST_LOG": "info"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><strong>Claude Code</strong> — add to <code>.mcp.json</code> in your project root</summary>
-
-```json
-{
-  "mcpServers": {
-    "sovereign-prompt": {
-      "command": "/absolute/path/to/target/release/sovereign-prompt",
-      "env": {
-        "SOVEREIGN_DB_PATH": "./sovereign_prompt.db",
-        "SOVEREIGN_CONFIG_PATH": "./sovereign_prompt.toml"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><strong>Any MCP Client</strong> — SSE transport for network-based clients</summary>
-
-```bash
-SOVEREIGN_MCP_TRANSPORT=sse SOVEREIGN_MCP_SSE_ADDR=127.0.0.1:8790 ./target/release/sovereign-prompt
-```
-
-SSE endpoint: `http://127.0.0.1:8790/sse`
-
-</details>
-
-### 3. Use
-
-Every tool is available the moment the server connects. Start here:
-
-```
-optimize_prompt: { "prompt": "your prompt here" }
-```
-
-Want to see what the engine is thinking? Add `"explain_mode": true` — you'll get a full breakdown of every heuristic, what matched, what didn't, and why.
-
-Want to know how much you've saved? Call `savings_report` with your user ID and a time range (`7d`, `30d`, `90d`, `all`). You'll get total token savings, cost estimates across major models, daily trends, and your most common prompt issues.
 
 ---
 
@@ -253,17 +236,10 @@ output_format = true
 ambiguous_pronouns = true
 governance = true
 
-# Tune thresholds to your workflow
+# Tune thresholds
 redundancy_word_repeat = 3
 pronoun_threshold = 3
 context_min_length = 50
-conjunction_threshold = 2
-format_min_length = 30
-
-# Add your own patterns
-# extra_vague_terms = ["thingy", "whatnot"]
-# extra_injection_patterns = ["bypass safety"]
-# extra_polite_terms = ["excuse me"]
 
 # Custom heuristic plugins — your own regex-based checks
 # [[heuristics.custom_checks]]
@@ -285,8 +261,6 @@ No config file? Every default is sane. The engine runs at full strength out of t
 
 A built-in Axum dashboard streams analytics over WebSockets at `http://127.0.0.1:8787`. Total prompts, tokens saved, average savings, governance status — all updating in real time.
 
-Run the dashboard standalone:
-
 ```bash
 SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 ```
@@ -303,7 +277,7 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 | **Persistence** | SQLite via `sqlx` — async, zero compile-time DB |
 | **Dashboard** | `axum` with WebSocket streaming |
 | **Crypto** | `sha2` + `hmac` — SHA-256 hashing, HMAC-SHA256 signing |
-| **Config** | `toml` — fully configurable heuristics and injection modes |
+| **Config** | `toml` — fully configurable heuristics, plugins, and injection modes |
 | **Runtime** | `tokio` — full async with graceful signal handling |
 | **Tests** | 63 integration tests across all modules |
 
@@ -321,24 +295,6 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 | `SOVEREIGN_DASHBOARD_ONLY` | `false` | Dashboard-only mode |
 | `SOVEREIGN_HMAC_KEY` | _(dev default)_ | HMAC signing key (**change in production**) |
 | `RUST_LOG` | _(none)_ | Log level: `info`, `debug`, `trace` |
-
----
-
-## Roadmap
-
-- [x] 9-heuristic analysis engine with severity grading
-- [x] Domain-specific template library (7 domains)
-- [x] Multi-model token counting across 4 encodings
-- [x] Configurable heuristics + injection modes via TOML
-- [x] Explain mode — full heuristic transparency
-- [x] Cost savings reports with multi-model estimates
-- [x] Governance policy engine with PII/credential detection
-- [x] Cryptographic audit trails (SHA-256 + HMAC-SHA256)
-- [x] SSE transport + WebSocket dashboard
-- [x] `#![deny(unsafe_code)]` + security documentation
-- [x] Learning feedback loop — rate optimizations, get insights, improve over time
-- [x] Custom heuristic plugins — define your own regex checks in TOML
-- [x] Team-level analytics — aggregate savings across your organization
 
 ---
 

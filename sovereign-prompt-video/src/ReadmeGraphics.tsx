@@ -78,7 +78,7 @@ const Node: React.FC<{
         position: "absolute",
         left: x,
         top: y,
-        width: 260,
+        width: 210,
         padding: "16px 18px",
         opacity,
         transform: `translateY(${(1 - progress) * 24}px) scale(${0.96 + progress * 0.04})`,
@@ -183,46 +183,46 @@ export const HowItWorksGraphic: React.FC = () => {
 
       <Node
         label="Client Request"
-        subtitle="Incoming prompt and user context"
+        subtitle="Incoming prompt + context"
         color={COLORS.accentA}
-        x={30}
+        x={20}
         y={208}
         delay={12}
       />
-      <Arrow x={280} y={273} w={80} delay={24} color={COLORS.accentA} />
+      <Arrow x={230} y={273} w={60} delay={24} color={COLORS.accentA} />
       <Node
         label="Analyzer"
-        subtitle="9 heuristics identify waste and risk"
+        subtitle="9 heuristics catch waste"
         color={COLORS.accentC}
-        x={360}
+        x={290}
         y={120}
         delay={34}
       />
-      <Arrow x={490} y={278} w={0} delay={0} color={COLORS.accentA} />
+      <Arrow x={420} y={278} w={0} delay={0} color={COLORS.accentA} />
       <Node
         label="Optimizer + Templates"
-        subtitle="Domain-specific prompt shaping"
+        subtitle="Domain-specific shaping"
         color={COLORS.accentB}
-        x={360}
+        x={290}
         y={296}
         delay={48}
       />
-      <Arrow x={610} y={170} w={80} delay={62} color={COLORS.accentC} />
-      <Arrow x={610} y={344} w={80} delay={66} color={COLORS.accentB} />
+      <Arrow x={500} y={170} w={60} delay={62} color={COLORS.accentC} />
+      <Arrow x={500} y={344} w={60} delay={66} color={COLORS.accentB} />
       <Node
         label="Tokenizer"
-        subtitle="Counts across cl100k/o200k/p50k/r50k"
+        subtitle="4 models counted"
         color={COLORS.accentD}
-        x={690}
+        x={560}
         y={208}
         delay={76}
       />
-      <Arrow x={810} y={273} w={80} delay={90} color={COLORS.accentD} />
+      <Arrow x={770} y={273} w={60} delay={90} color={COLORS.accentD} />
       <Node
-        label="Persistence + Output"
-        subtitle="Stored analytics + optimized response"
+        label="Persist + Output"
+        subtitle="Stored + optimized response"
         color={COLORS.accentA}
-        x={890}
+        x={830}
         y={208}
         delay={102}
       />
