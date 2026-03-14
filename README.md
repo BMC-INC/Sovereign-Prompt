@@ -24,7 +24,7 @@
 
 <br>
 
-https://github.com/BMC-INC/Sovereign-Prompt/releases/download/v0.2.0/SovereignPrompt.mp4
+https://github.com/user-attachments/assets/ee2438e2-5f89-4dc3-8cd2-1f784a8844ab
 
 <br>
 
