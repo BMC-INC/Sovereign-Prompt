@@ -1,9 +1,11 @@
 use sovereign_prompt::analyzer::PromptAnalyzer;
+use sovereign_prompt::crypto::CryptoEngine;
 use sovereign_prompt::db::Database;
+use sovereign_prompt::governance::GovernancePolicy;
 use sovereign_prompt::optimizer::PromptOptimizer;
 use sovereign_prompt::templates::PromptTemplateLibrary;
 use sovereign_prompt::tokenizer::Tokenizer;
-use sovereign_prompt::types::PromptRecord;
+use sovereign_prompt::types::{AuditLogEntry, PromptRecord};
 
 // ── Tokenizer tests ──
 
@@ -362,4 +364,222 @@ async fn db_top_issues_populated() {
     assert!(
         stats.top_issues[0].contains("Clarity") || stats.top_issues[0].contains("Token Efficiency")
     );
+}
+
+// ── Crypto tests ──
+
+#[test]
+fn crypto_hash_deterministic() {
+    let h1 = CryptoEngine::hash_content("hello");
+    let h2 = CryptoEngine::hash_content("hello");
+    assert_eq!(h1, h2);
+    assert_eq!(h1.len(), 64); // SHA-256 hex = 64 chars
+}
+
+#[test]
+fn crypto_content_hash_combines_fields() {
+    let h1 = CryptoEngine::compute_content_hash("original", "refined");
+    let h2 = CryptoEngine::compute_content_hash("original", "different");
+    assert_ne!(h1, h2);
+}
+
+#[test]
+fn crypto_sign_and_verify() {
+    let engine = CryptoEngine::new(b"test-key");
+    let hash = CryptoEngine::hash_content("test content");
+    let sig = engine.sign(&hash);
+    assert!(engine.verify(&hash, &sig));
+    assert!(!engine.verify(&hash, "bad-signature"));
+}
+
+#[test]
+fn crypto_verify_hash_chain_valid() {
+    let ch = CryptoEngine::compute_content_hash("orig", "ref");
+    let oh = CryptoEngine::compute_output_hash("output");
+    assert!(CryptoEngine::verify_hash_chain(
+        "orig",
+        "ref",
+        &ch,
+        Some("output"),
+        Some(&oh)
+    ));
+}
+
+#[test]
+fn crypto_verify_hash_chain_tampered() {
+    let ch = CryptoEngine::compute_content_hash("orig", "ref");
+    assert!(!CryptoEngine::verify_hash_chain(
+        "orig", "TAMPERED", &ch, None, None
+    ));
+}
+
+#[test]
+fn crypto_different_keys_different_sigs() {
+    let e1 = CryptoEngine::new(b"key-1");
+    let e2 = CryptoEngine::new(b"key-2");
+    let hash = CryptoEngine::hash_content("data");
+    assert_ne!(e1.sign(&hash), e2.sign(&hash));
+}
+
+// ── Governance tests ──
+
+#[test]
+fn governance_detects_ssn_pattern() {
+    let fb = GovernancePolicy::validate_prompt("My SSN is 123-45-6789");
+    assert!(fb
+        .iter()
+        .any(|f| f.category == "Governance" && f.message.contains("SSN")));
+}
+
+#[test]
+fn governance_detects_api_key() {
+    let fb = GovernancePolicy::validate_prompt("Use api_key: sk-abc123xyz");
+    assert!(fb.iter().any(|f| f.category == "Governance"));
+}
+
+#[test]
+fn governance_clean_prompt_approved() {
+    let fb = GovernancePolicy::validate_prompt("Write a sorting algorithm in Rust");
+    let status = GovernancePolicy::determine_status(&fb);
+    assert_eq!(status, "approved");
+}
+
+#[test]
+fn governance_critical_prompt_rejected() {
+    let fb = GovernancePolicy::validate_prompt("My SSN is 123-45-6789");
+    let status = GovernancePolicy::determine_status(&fb);
+    assert_eq!(status, "rejected");
+}
+
+#[test]
+fn governance_pii_warning_pending() {
+    let fb = GovernancePolicy::validate_prompt(
+        "Please look up the user's date of birth in the database and return it",
+    );
+    let status = GovernancePolicy::determine_status(&fb);
+    assert_eq!(status, "pending");
+}
+
+#[test]
+fn analyzer_includes_governance_check() {
+    let feedback =
+        PromptAnalyzer::analyze("Store the password: hunter2 and api_key=sk-secret123");
+    assert!(feedback.iter().any(|f| f.category == "Governance"));
+}
+
+// ── DB audit log tests ──
+
+#[tokio::test]
+async fn db_audit_log_insert_and_retrieve() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    let record = PromptRecord::new(
+        "testuser".to_string(),
+        "original".to_string(),
+        10,
+        "refined".to_string(),
+        8,
+        serde_json::json!([]),
+    );
+    db.insert_prompt(&record).await.unwrap();
+
+    let entry = AuditLogEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        prompt_id: record.id.clone(),
+        action: "created".to_string(),
+        actor: "testuser".to_string(),
+        detail: serde_json::json!({"test": true}),
+        created_at: chrono::Utc::now(),
+    };
+    db.insert_audit_log(&entry).await.unwrap();
+
+    let trail = db.get_audit_trail(&record.id).await.unwrap();
+    assert_eq!(trail.len(), 1);
+    assert_eq!(trail[0].action, "created");
+    assert_eq!(trail[0].actor, "testuser");
+}
+
+#[tokio::test]
+async fn db_get_prompt_by_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    let record = PromptRecord::new(
+        "testuser".to_string(),
+        "original".to_string(),
+        10,
+        "refined".to_string(),
+        8,
+        serde_json::json!([]),
+    );
+    let id = record.id.clone();
+    db.insert_prompt(&record).await.unwrap();
+
+    let found = db.get_prompt_by_id(&id).await.unwrap();
+    assert!(found.is_some());
+    assert_eq!(found.unwrap().original_prompt, "original");
+
+    let not_found = db.get_prompt_by_id("nonexistent").await.unwrap();
+    assert!(not_found.is_none());
+}
+
+#[tokio::test]
+async fn db_prompt_with_governance_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    let mut record = PromptRecord::new(
+        "testuser".to_string(),
+        "original".to_string(),
+        10,
+        "refined".to_string(),
+        8,
+        serde_json::json!([]),
+    );
+    record.governance_id = Some("gov-123".to_string());
+    record.policy_version = Some("v1.0.0".to_string());
+    record.approval_status = Some("approved".to_string());
+    record.content_hash = Some("abc123".to_string());
+
+    let id = record.id.clone();
+    db.insert_prompt(&record).await.unwrap();
+
+    let found = db.get_prompt_by_id(&id).await.unwrap().unwrap();
+    assert_eq!(found.governance_id.as_deref(), Some("gov-123"));
+    assert_eq!(found.policy_version.as_deref(), Some("v1.0.0"));
+    assert_eq!(found.approval_status.as_deref(), Some("approved"));
+    assert_eq!(found.content_hash.as_deref(), Some("abc123"));
+}
+
+#[tokio::test]
+async fn db_update_signature_and_retrieve() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    let record = PromptRecord::new(
+        "testuser".to_string(),
+        "original".to_string(),
+        10,
+        "refined".to_string(),
+        8,
+        serde_json::json!([]),
+    );
+    let id = record.id.clone();
+    db.insert_prompt(&record).await.unwrap();
+
+    let now = chrono::Utc::now();
+    db.update_signature(&id, "sig-abc", &now).await.unwrap();
+
+    let found = db.get_prompt_by_id(&id).await.unwrap().unwrap();
+    assert_eq!(found.signature.as_deref(), Some("sig-abc"));
+    assert!(found.signed_at.is_some());
 }

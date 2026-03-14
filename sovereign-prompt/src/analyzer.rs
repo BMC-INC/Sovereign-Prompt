@@ -1,3 +1,4 @@
+use crate::governance::GovernancePolicy;
 use crate::types::{FeedbackItem, Severity};
 use regex::Regex;
 
@@ -15,6 +16,7 @@ impl PromptAnalyzer {
         check_task_separation(prompt, &mut feedback);
         check_output_format(prompt, &mut feedback);
         check_ambiguous_pronouns(prompt, &mut feedback);
+        check_governance_policy(prompt, &mut feedback);
 
         feedback
     }
@@ -233,4 +235,9 @@ fn check_ambiguous_pronouns(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
             ),
         });
     }
+}
+
+fn check_governance_policy(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
+    let gov_feedback = GovernancePolicy::validate_prompt(prompt);
+    feedback.extend(gov_feedback);
 }

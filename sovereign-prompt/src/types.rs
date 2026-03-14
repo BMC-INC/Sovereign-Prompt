@@ -18,6 +18,15 @@ pub struct PromptRecord {
     pub output: Option<String>,
     pub output_token_count: Option<i64>,
     pub created_at: DateTime<Utc>,
+    // Governance fields
+    pub governance_id: Option<String>,
+    pub policy_version: Option<String>,
+    pub approval_status: Option<String>,
+    // Crypto fields
+    pub content_hash: Option<String>,
+    pub output_hash: Option<String>,
+    pub signature: Option<String>,
+    pub signed_at: Option<DateTime<Utc>>,
 }
 
 impl PromptRecord {
@@ -72,6 +81,13 @@ impl PromptRecord {
             output: None,
             output_token_count: None,
             created_at: Utc::now(),
+            governance_id: None,
+            policy_version: None,
+            approval_status: None,
+            content_hash: None,
+            output_hash: None,
+            signature: None,
+            signed_at: None,
         }
     }
 }
@@ -90,6 +106,8 @@ pub struct OptimizeResponse {
     pub template: PromptTemplateSummary,
     pub feedback: Vec<FeedbackItem>,
     pub variants: Vec<PromptVariant>,
+    pub content_hash: Option<String>,
+    pub governance_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +145,16 @@ pub struct PromptVariant {
     pub prompt: String,
     pub token_count: i64,
     pub use_case: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLogEntry {
+    pub id: String,
+    pub prompt_id: String,
+    pub action: String,
+    pub actor: String,
+    pub detail: serde_json::Value,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

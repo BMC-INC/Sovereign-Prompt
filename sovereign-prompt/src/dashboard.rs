@@ -180,7 +180,7 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       background: linear-gradient(140deg, var(--accent), #2d85ff); color: #001321;
       font-weight: 700;
     }
-    .grid { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0,1fr)); margin-top: 14px; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(5, minmax(0,1fr)); margin-top: 14px; }
     .card {
       background: color-mix(in srgb, var(--panel) 85%, transparent);
       border: 1px solid var(--line); border-radius: 14px; padding: 16px;
@@ -205,6 +205,7 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
     .top-issues { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px; }
     .issue { background: #162132; border: 1px solid #2b3f5b; border-radius: 999px; padding: 6px 10px; color: #c5d9ef; font-size: 13px; }
     .status { margin-left: 8px; font-size: 12px; color: var(--muted); }
+    @media (max-width: 1060px) { .grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
     @media (max-width: 960px) { .grid { grid-template-columns: repeat(2, minmax(0,1fr)); } .hero { flex-direction: column; align-items: start; } }
     @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } input { width: 100%; } .controls { width: 100%; } }
   </style>
@@ -228,6 +229,7 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       <div class="card"><div class="label">Tokens Saved</div><div class="value accent" id="tokensSaved">0</div></div>
       <div class="card"><div class="label">Avg Savings</div><div class="value green" id="avgSavings">0%</div></div>
       <div class="card"><div class="label">Stream Status</div><div class="value orange" id="streamState">idle</div></div>
+      <div class="card"><div class="label">Governance</div><div class="value" id="govStatus" style="color:var(--accent-2)">--</div></div>
     </div>
 
     <div class="section-title">Top Issues</div>
@@ -244,6 +246,8 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
             <th>Original</th>
             <th>Refined</th>
             <th>Savings</th>
+            <th>Hash</th>
+            <th>Signed</th>
           </tr>
         </thead>
         <tbody id="historyRows"></tbody>
@@ -261,6 +265,7 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       tokensSaved: document.getElementById("tokensSaved"),
       avgSavings: document.getElementById("avgSavings"),
       streamState: document.getElementById("streamState"),
+      govStatus: document.getElementById("govStatus"),
       issues: document.getElementById("issues"),
       historyRows: document.getElementById("historyRows"),
     };
@@ -272,6 +277,10 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       const avg = Number(stats.average_savings_percentage ?? 0);
       els.avgSavings.textContent = avg.toFixed(1) + "%";
       els.streamState.textContent = "live";
+
+      const recent = payload.recent_history || [];
+      const latestStatus = recent.length > 0 && recent[0].approval_status ? recent[0].approval_status : "--";
+      els.govStatus.textContent = latestStatus;
 
       const issues = stats.top_issues || [];
       els.issues.innerHTML = issues.length
@@ -287,6 +296,8 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
           <td>${row.original_token_count}</td>
           <td>${row.refined_token_count}</td>
           <td>${Number(row.savings_percentage || 0).toFixed(1)}%</td>
+          <td>${row.content_hash ? `<span class="pill">${row.content_hash.slice(0,8)}…</span>` : '<span style="color:var(--muted)">none</span>'}</td>
+          <td>${row.signature ? '<span style="color:var(--accent-2)">&#x2713;</span>' : '<span style="color:var(--muted)">&mdash;</span>'}</td>
         </tr>
       `).join("");
     }

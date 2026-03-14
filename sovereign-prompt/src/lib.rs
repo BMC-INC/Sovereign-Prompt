@@ -1,6 +1,8 @@
 pub mod analyzer;
+pub mod crypto;
 pub mod dashboard;
 pub mod db;
+pub mod governance;
 pub mod optimizer;
 pub mod server;
 pub mod templates;

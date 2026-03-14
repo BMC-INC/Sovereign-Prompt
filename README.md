@@ -6,7 +6,7 @@
 <img src="https://img.shields.io/badge/MCP-Native-6c5ce7?style=for-the-badge" alt="MCP Native" />
 <img src="https://img.shields.io/badge/SQLite-Persistence-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" />
 <img src="https://img.shields.io/badge/License-MIT-00cec9?style=for-the-badge" alt="MIT License" />
-<img src="https://img.shields.io/badge/Tests-29%20Passing-2ecc71?style=for-the-badge" alt="Tests Passing" />
+<img src="https://img.shields.io/badge/Tests-45%20Passing-2ecc71?style=for-the-badge" alt="Tests Passing" />
 
 <br><br>
 
@@ -96,10 +96,15 @@ Per-domain prompt templates (`backend`, `frontend`, `data`, `security`, `product
 | **`get_history`** | Fetch recent prompt history with full refinement data. | `user_id`, `limit` (max 50) |
 | **`list_templates`** | List available optimization domains in the template library. | _none_ |
 | **`count_tokens`** | Count tokens for text using one model or all supported models. | `text` (required), `model` (optional) |
+| **`governance_check`** | Validate a stored prompt against governance policies. | `prompt_id` |
+| **`governance_approve`** | Approve or reject a prompt optimization with actor tracking. | `prompt_id`, `actor`, `status` |
+| **`get_audit_trail`** | Retrieve the governance audit trail for a prompt. | `prompt_id` |
+| **`sign_optimization`** | Cryptographically sign a prompt optimization record (HMAC-SHA256). | `prompt_id` |
+| **`verify_signature`** | Verify the cryptographic signature and hash chain of a prompt record. | `prompt_id` |
 
 ---
 
-## 8 Heuristic Checks
+## 9 Heuristic Checks
 
 | Check | Severity | What It Catches |
 |:------|:---------|:----------------|
@@ -111,6 +116,7 @@ Per-domain prompt templates (`backend`, `frontend`, `data`, `security`, `product
 | **Task Separation** | Warning | Multiple conjunctions (`"and then"`, `"additionally"`, `"as well as"`) indicating bundled tasks |
 | **Output Format** | Info | No format signal detected (`json`, `list`, `table`, `code`, etc.) in prompts >30 chars |
 | **Ambiguous Pronouns** | Warning | 3+ unresolved pronouns (`"it"`, `"this"`, `"they"`, `"those"`) in a single prompt |
+| **Governance Policy** | Critical/Warning | SSN patterns, credit card numbers, API keys/credentials, PII references (`"social security"`, `"date of birth"`, etc.) |
 
 ---
 
@@ -150,18 +156,20 @@ sovereign-prompt/
 │   ├── main.rs          # Entry point — dotenv, DB init, signal handling
 │   ├── lib.rs           # Library re-exports for integration tests
 │   ├── server.rs        # MCP ServerHandler — 6 tools, schema definitions
-│   ├── analyzer.rs      # 8 heuristic checks with cached regex
+│   ├── analyzer.rs      # 9 heuristic checks with cached regex
 │   ├── optimizer.rs     # Politeness stripping, normalization, variant generation
 │   ├── templates.rs     # Domain template library and constraints
 │   ├── tokenizer.rs     # Model-aware token counting across 4 encodings
+│   ├── crypto.rs        # SHA-256 hashing, HMAC-SHA256 signing and verification
+│   ├── governance.rs    # Governance policy validation and approval logic
 │   ├── dashboard.rs     # Axum dashboard + WebSocket analytics stream
-│   ├── types.rs         # PromptRecord, OptimizeResponse, FeedbackItem, UserStats
-│   └── db.rs            # SQLite — migrations, CRUD, stats aggregation
+│   ├── types.rs         # PromptRecord, OptimizeResponse, AuditLogEntry, FeedbackItem, UserStats
+│   └── db.rs            # SQLite — migrations, CRUD, stats, audit trail
 ├── assets/
 │   ├── how-it-works.gif
 │   └── optimization-pipeline.gif
 └── tests/
-    └── integration_test.rs  # 29 tests across all modules
+    └── integration_test.rs  # 45 tests across all modules
 ```
 
 ---
@@ -282,14 +290,15 @@ CREATE TABLE IF NOT EXISTS prompts (
 | `SOVEREIGN_MCP_SSE_ADDR` | `127.0.0.1:8790` | SSE bind address when `SOVEREIGN_MCP_TRANSPORT=sse` |
 | `SOVEREIGN_DASHBOARD_ADDR` | `127.0.0.1:8787` | Dashboard + WebSocket bind address |
 | `SOVEREIGN_DASHBOARD_ONLY` | `false` | If true, run only the dashboard server and skip MCP transport startup |
+| `SOVEREIGN_HMAC_KEY` | _(dev default)_ | HMAC-SHA256 secret key for cryptographic signing |
 | `RUST_LOG` | _(none)_ | Tracing filter level (`info`, `debug`, `trace`) |
 
 ---
 
 ## Roadmap
 
-- [ ] ExecLayer SovereignClaw governance integration
-- [ ] Cryptographic execution binding and audit trails
+- [x] ExecLayer SovereignClaw governance integration
+- [x] Cryptographic execution binding and audit trails
 - [x] Prompt template library with per-domain optimization
 - [x] Multi-model token counting (o200k_base, etc.)
 - [x] WebSocket transport support

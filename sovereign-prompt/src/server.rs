@@ -1,15 +1,19 @@
 use crate::analyzer::PromptAnalyzer;
+use crate::crypto::CryptoEngine;
 use crate::db::Database;
+use crate::governance::GovernancePolicy;
 use crate::optimizer::PromptOptimizer;
 use crate::templates::PromptTemplateLibrary;
 use crate::tokenizer::{Tokenizer, DEFAULT_TOKEN_MODEL};
-use crate::types::{ModelTokenSummary, OptimizeResponse, PromptRecord};
+use crate::types::{AuditLogEntry, ModelTokenSummary, OptimizeResponse, PromptRecord};
 use anyhow::Result;
+use chrono::Utc;
 use rmcp::model::*;
 use rmcp::{ServerHandler, ServiceExt};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use uuid::Uuid;
 
 type JsonObject = serde_json::Map<String, serde_json::Value>;
 
@@ -17,6 +21,7 @@ type JsonObject = serde_json::Map<String, serde_json::Value>;
 pub struct SovereignPromptServer {
     db: Arc<Database>,
     tokenizer: Arc<Tokenizer>,
+    crypto: Arc<CryptoEngine>,
 }
 
 impl SovereignPromptServer {
@@ -146,6 +151,99 @@ impl SovereignPromptServer {
                     .unwrap(),
                 ),
             ),
+            Tool::new(
+                "governance_check",
+                "Validate a stored prompt against governance policies.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "prompt_id": {
+                                "type": "string",
+                                "description": "The prompt ID to validate"
+                            }
+                        },
+                        "required": ["prompt_id"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
+            Tool::new(
+                "governance_approve",
+                "Approve or reject a prompt optimization with governance tracking.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "prompt_id": {
+                                "type": "string",
+                                "description": "The prompt ID to approve/reject"
+                            },
+                            "actor": {
+                                "type": "string",
+                                "description": "The user or system approving/rejecting"
+                            },
+                            "status": {
+                                "type": "string",
+                                "description": "New status: approved or rejected"
+                            }
+                        },
+                        "required": ["prompt_id", "actor", "status"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
+            Tool::new(
+                "get_audit_trail",
+                "Retrieve the governance audit trail for a prompt.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "prompt_id": {
+                                "type": "string",
+                                "description": "The prompt ID to get audit trail for"
+                            }
+                        },
+                        "required": ["prompt_id"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
+            Tool::new(
+                "sign_optimization",
+                "Cryptographically sign a prompt optimization record.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "prompt_id": {
+                                "type": "string",
+                                "description": "The prompt ID to sign"
+                            }
+                        },
+                        "required": ["prompt_id"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
+            Tool::new(
+                "verify_signature",
+                "Verify the cryptographic signature and hash chain of a prompt record.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "prompt_id": {
+                                "type": "string",
+                                "description": "The prompt ID to verify"
+                            }
+                        },
+                        "required": ["prompt_id"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
         ]
     }
 
@@ -219,8 +317,17 @@ impl SovereignPromptServer {
 
         let feedback_json = serde_json::to_value(&feedback).unwrap_or_default();
 
-        let record = PromptRecord::new_with_context(
-            user_id,
+        // Compute content hash
+        let content_hash = CryptoEngine::compute_content_hash(&prompt, &refined);
+
+        // Run governance check
+        let policy = GovernancePolicy::current();
+        let gov_feedback = GovernancePolicy::validate_prompt(&prompt);
+        let approval_status = GovernancePolicy::determine_status(&gov_feedback);
+        let governance_id = Uuid::new_v4().to_string();
+
+        let mut record = PromptRecord::new_with_context(
+            user_id.clone(),
             domain.clone(),
             token_model.clone(),
             prompt.clone(),
@@ -230,12 +337,32 @@ impl SovereignPromptServer {
             feedback_json,
         );
 
+        record.governance_id = Some(governance_id.clone());
+        record.policy_version = Some(policy.version.clone());
+        record.approval_status = Some(approval_status.clone());
+        record.content_hash = Some(content_hash.clone());
+
         let prompt_id = record.id.clone();
 
         self.db
             .insert_prompt(&record)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Write audit log entry
+        let audit = AuditLogEntry {
+            id: Uuid::new_v4().to_string(),
+            prompt_id: prompt_id.clone(),
+            action: "created".to_string(),
+            actor: user_id,
+            detail: serde_json::json!({
+                "policy_version": policy.version,
+                "approval_status": approval_status,
+                "content_hash": content_hash,
+            }),
+            created_at: Utc::now(),
+        };
+        let _ = self.db.insert_audit_log(&audit).await;
 
         let response = OptimizeResponse {
             prompt_id,
@@ -250,6 +377,8 @@ impl SovereignPromptServer {
             template,
             feedback,
             variants,
+            content_hash: Some(content_hash),
+            governance_status: Some(approval_status),
         };
 
         let json = serde_json::to_string_pretty(&response)
@@ -298,12 +427,31 @@ impl SovereignPromptServer {
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Compute and store output hash
+        let output_hash = CryptoEngine::compute_output_hash(&output);
+        let _ = self.db.update_output_hash(&prompt_id, &output_hash).await;
+
+        // Audit log
+        let audit = AuditLogEntry {
+            id: Uuid::new_v4().to_string(),
+            prompt_id: prompt_id.clone(),
+            action: "captured".to_string(),
+            actor: "system".to_string(),
+            detail: serde_json::json!({
+                "output_hash": output_hash,
+                "output_token_count": output_tokens,
+            }),
+            created_at: Utc::now(),
+        };
+        let _ = self.db.insert_audit_log(&audit).await;
+
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::json!({
                 "status": "captured",
                 "prompt_id": prompt_id,
                 "token_model": token_model,
-                "output_token_count": output_tokens
+                "output_token_count": output_tokens,
+                "output_hash": output_hash
             })
             .to_string(),
         )]))
@@ -374,6 +522,225 @@ impl SovereignPromptServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
+    async fn handle_governance_check(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
+        let prompt_id = args
+            .get("prompt_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'prompt_id' parameter", None))?;
+
+        let record = self
+            .db
+            .get_prompt_by_id(prompt_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .ok_or_else(|| ErrorData::invalid_params("prompt not found", None))?;
+
+        let policy = GovernancePolicy::current();
+        let gov_feedback = GovernancePolicy::validate_prompt(&record.original_prompt);
+        let status = GovernancePolicy::determine_status(&gov_feedback);
+
+        let json = serde_json::json!({
+            "prompt_id": prompt_id,
+            "policy_version": policy.version,
+            "governance_feedback": gov_feedback,
+            "recommended_status": status,
+            "current_status": record.approval_status,
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
+        )]))
+    }
+
+    async fn handle_governance_approve(
+        &self,
+        args: &JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let prompt_id = args
+            .get("prompt_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'prompt_id' parameter", None))?
+            .to_string();
+
+        let actor = args
+            .get("actor")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'actor' parameter", None))?
+            .to_string();
+
+        let status = args
+            .get("status")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'status' parameter", None))?
+            .to_string();
+
+        if status != "approved" && status != "rejected" {
+            return Err(ErrorData::invalid_params(
+                "status must be 'approved' or 'rejected'",
+                None,
+            ));
+        }
+
+        // Verify prompt exists
+        self.db
+            .get_prompt_by_id(&prompt_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .ok_or_else(|| ErrorData::invalid_params("prompt not found", None))?;
+
+        self.db
+            .update_approval_status(&prompt_id, &status)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let audit = AuditLogEntry {
+            id: Uuid::new_v4().to_string(),
+            prompt_id: prompt_id.clone(),
+            action: status.clone(),
+            actor: actor.clone(),
+            detail: serde_json::json!({
+                "new_status": status,
+            }),
+            created_at: Utc::now(),
+        };
+        self.db
+            .insert_audit_log(&audit)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::json!({
+                "prompt_id": prompt_id,
+                "status": status,
+                "actor": actor,
+            })
+            .to_string(),
+        )]))
+    }
+
+    async fn handle_get_audit_trail(
+        &self,
+        args: &JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let prompt_id = args
+            .get("prompt_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'prompt_id' parameter", None))?;
+
+        let trail = self
+            .db
+            .get_audit_trail(prompt_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let json = serde_json::to_string_pretty(&trail)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    async fn handle_sign_optimization(
+        &self,
+        args: &JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let prompt_id = args
+            .get("prompt_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'prompt_id' parameter", None))?
+            .to_string();
+
+        let record = self
+            .db
+            .get_prompt_by_id(&prompt_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .ok_or_else(|| ErrorData::invalid_params("prompt not found", None))?;
+
+        let content_hash = record
+            .content_hash
+            .ok_or_else(|| ErrorData::internal_error("no content hash on record", None))?;
+
+        let signature = self.crypto.sign(&content_hash);
+        let signed_at = Utc::now();
+
+        self.db
+            .update_signature(&prompt_id, &signature, &signed_at)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let audit = AuditLogEntry {
+            id: Uuid::new_v4().to_string(),
+            prompt_id: prompt_id.clone(),
+            action: "signed".to_string(),
+            actor: "system".to_string(),
+            detail: serde_json::json!({
+                "content_hash": content_hash,
+                "signature": signature,
+            }),
+            created_at: Utc::now(),
+        };
+        let _ = self.db.insert_audit_log(&audit).await;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::json!({
+                "prompt_id": prompt_id,
+                "content_hash": content_hash,
+                "signature": signature,
+                "signed_at": signed_at.to_rfc3339(),
+            })
+            .to_string(),
+        )]))
+    }
+
+    async fn handle_verify_signature(
+        &self,
+        args: &JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let prompt_id = args
+            .get("prompt_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'prompt_id' parameter", None))?;
+
+        let record = self
+            .db
+            .get_prompt_by_id(prompt_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .ok_or_else(|| ErrorData::invalid_params("prompt not found", None))?;
+
+        let content_hash = record
+            .content_hash
+            .as_deref()
+            .ok_or_else(|| ErrorData::internal_error("no content hash on record", None))?;
+
+        let signature = record
+            .signature
+            .as_deref()
+            .ok_or_else(|| ErrorData::internal_error("record is not signed", None))?;
+
+        let sig_valid = self.crypto.verify(content_hash, signature);
+        let chain_valid = CryptoEngine::verify_hash_chain(
+            &record.original_prompt,
+            &record.refined_prompt,
+            content_hash,
+            record.output.as_deref(),
+            record.output_hash.as_deref(),
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::json!({
+                "prompt_id": prompt_id,
+                "signature_valid": sig_valid,
+                "hash_chain_valid": chain_valid,
+                "content_hash": content_hash,
+                "output_hash": record.output_hash,
+                "signed_at": record.signed_at.map(|dt| dt.to_rfc3339()),
+            })
+            .to_string(),
+        )]))
+    }
+
     async fn handle_get_history(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
         let user_id = args
             .get("user_id")
@@ -437,6 +804,11 @@ impl ServerHandler for SovereignPromptServer {
             "get_history" => self.handle_get_history(&args).await,
             "list_templates" => self.handle_list_templates(&args).await,
             "count_tokens" => self.handle_count_tokens(&args).await,
+            "governance_check" => self.handle_governance_check(&args).await,
+            "governance_approve" => self.handle_governance_approve(&args).await,
+            "get_audit_trail" => self.handle_get_audit_trail(&args).await,
+            "sign_optimization" => self.handle_sign_optimization(&args).await,
+            "verify_signature" => self.handle_verify_signature(&args).await,
             _ => Err(ErrorData::invalid_params(
                 format!("unknown tool: {}", request.name),
                 None,
@@ -447,10 +819,14 @@ impl ServerHandler for SovereignPromptServer {
 
 pub async fn run(db: Arc<Database>) -> Result<()> {
     let tokenizer = Tokenizer::new()?;
+    let hmac_key = std::env::var("SOVEREIGN_HMAC_KEY")
+        .unwrap_or_else(|_| "sovereign-prompt-dev-key-change-in-production".to_string());
+    let crypto = Arc::new(CryptoEngine::new(hmac_key.as_bytes()));
 
     let server = SovereignPromptServer {
         db,
         tokenizer: Arc::new(tokenizer),
+        crypto,
     };
 
     let service = server.serve(rmcp::transport::stdio()).await?;
@@ -461,10 +837,14 @@ pub async fn run(db: Arc<Database>) -> Result<()> {
 
 pub async fn run_sse(db: Arc<Database>, bind: SocketAddr) -> Result<()> {
     let tokenizer = Tokenizer::new()?;
+    let hmac_key = std::env::var("SOVEREIGN_HMAC_KEY")
+        .unwrap_or_else(|_| "sovereign-prompt-dev-key-change-in-production".to_string());
+    let crypto = Arc::new(CryptoEngine::new(hmac_key.as_bytes()));
 
     let server = SovereignPromptServer {
         db,
         tokenizer: Arc::new(tokenizer),
+        crypto,
     };
 
     let ct = rmcp::transport::sse_server::SseServer::serve(bind)
