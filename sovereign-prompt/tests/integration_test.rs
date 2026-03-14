@@ -6,7 +6,8 @@ use sovereign_prompt::governance::GovernancePolicy;
 use sovereign_prompt::optimizer::PromptOptimizer;
 use sovereign_prompt::templates::PromptTemplateLibrary;
 use sovereign_prompt::tokenizer::Tokenizer;
-use sovereign_prompt::types::{AuditLogEntry, PromptRecord};
+use sovereign_prompt::config::CustomCheck;
+use sovereign_prompt::types::{AuditLogEntry, LearningSignal, PromptRecord};
 
 // ── Tokenizer tests ──
 
@@ -821,4 +822,173 @@ async fn db_update_signature_and_retrieve() {
     let found = db.get_prompt_by_id(&id).await.unwrap().unwrap();
     assert_eq!(found.signature.as_deref(), Some("sig-abc"));
     assert!(found.signed_at.is_some());
+}
+
+// ── Custom heuristic plugin tests ──
+
+#[test]
+fn custom_check_fires_on_pattern_match() {
+    let mut config = HeuristicsConfig::default();
+    config.custom_checks = vec![CustomCheck {
+        name: "jargon_detector".to_string(),
+        pattern: r"(?i)(synergy|leverage|paradigm)".to_string(),
+        severity: "warning".to_string(),
+        message: "Corporate jargon detected".to_string(),
+        suggestion: Some("Use plain language.".to_string()),
+    }];
+
+    let feedback = PromptAnalyzer::analyze_with_config(
+        "We need to leverage synergy to shift the paradigm",
+        &config,
+    );
+    let has_custom = feedback
+        .iter()
+        .any(|f| f.category.starts_with("Custom:") && f.message.contains("synergy"));
+    assert!(has_custom, "Should detect custom jargon pattern");
+}
+
+#[test]
+fn custom_check_does_not_fire_on_no_match() {
+    let mut config = HeuristicsConfig::default();
+    config.custom_checks = vec![CustomCheck {
+        name: "jargon_detector".to_string(),
+        pattern: r"(?i)(synergy|leverage)".to_string(),
+        severity: "warning".to_string(),
+        message: "Jargon detected".to_string(),
+        suggestion: None,
+    }];
+
+    let feedback = PromptAnalyzer::analyze_with_config(
+        "Write a sorting algorithm in Rust",
+        &config,
+    );
+    let has_custom = feedback.iter().any(|f| f.category.starts_with("Custom:"));
+    assert!(!has_custom, "Should not fire custom check on clean prompt");
+}
+
+#[test]
+fn custom_check_appears_in_explain_mode() {
+    let mut config = HeuristicsConfig::default();
+    config.custom_checks = vec![CustomCheck {
+        name: "test_plugin".to_string(),
+        pattern: r"foobar".to_string(),
+        severity: "info".to_string(),
+        message: "Found foobar".to_string(),
+        suggestion: None,
+    }];
+
+    let (_, explanations) = PromptAnalyzer::analyze_explained("This has foobar in it", &config);
+    let custom_exp = explanations
+        .iter()
+        .find(|e| e.check_name == "custom:test_plugin");
+    assert!(custom_exp.is_some(), "Custom check should appear in explanations");
+    assert!(custom_exp.unwrap().fired, "Custom check should fire");
+}
+
+// ── Learning feedback loop tests ──
+
+#[tokio::test]
+async fn db_learning_signal_insert_and_insights() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    // Insert a prompt
+    let record = PromptRecord::new(
+        "testuser".to_string(),
+        "original prompt".to_string(),
+        100,
+        "refined".to_string(),
+        60,
+        serde_json::json!([{"category": "Clarity", "severity": "Warning", "message": "vague"}]),
+    );
+    let prompt_id = record.id.clone();
+    db.insert_prompt(&record).await.unwrap();
+
+    // Rate it positive
+    let signal = LearningSignal {
+        id: uuid::Uuid::new_v4().to_string(),
+        prompt_id: prompt_id.clone(),
+        signal: "positive".to_string(),
+        comment: Some("Great optimization".to_string()),
+        actor: "testuser".to_string(),
+        created_at: chrono::Utc::now(),
+    };
+    db.insert_learning_signal(&signal).await.unwrap();
+
+    // Get insights
+    let insights = db.get_learning_insights(None).await.unwrap();
+    assert_eq!(insights.total_ratings, 1);
+    assert_eq!(insights.positive_count, 1);
+    assert_eq!(insights.negative_count, 0);
+    assert!((insights.positive_rate - 100.0).abs() < 0.01);
+}
+
+#[tokio::test]
+async fn db_learning_insights_empty_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    let insights = db.get_learning_insights(None).await.unwrap();
+    assert_eq!(insights.total_ratings, 0);
+    assert!(!insights.recommendations.is_empty());
+}
+
+// ── Team report tests ──
+
+#[tokio::test]
+async fn db_team_report_aggregates_users() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    // Insert prompts for two users
+    for user in &["alice", "bob"] {
+        for _ in 0..3 {
+            let record = PromptRecord::new(
+                user.to_string(),
+                "original prompt text here".to_string(),
+                100,
+                "refined".to_string(),
+                60,
+                serde_json::json!([]),
+            );
+            db.insert_prompt(&record).await.unwrap();
+        }
+    }
+
+    let user_ids = vec!["alice".to_string(), "bob".to_string()];
+    let report = db.get_team_report(&user_ids, "30d", None).await.unwrap();
+    assert_eq!(report.total_prompts, 6); // 3 + 3
+    assert_eq!(report.total_tokens_saved, 240); // 6 * (100 - 60)
+    assert_eq!(report.member_breakdown.len(), 2);
+    assert!(!report.cost_estimates.is_empty());
+}
+
+#[tokio::test]
+async fn db_team_report_all_users() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let db = Database::new(path.to_str().unwrap()).await.unwrap();
+    db.migrate().await.unwrap();
+
+    let record = PromptRecord::new(
+        "solo_user".to_string(),
+        "original".to_string(),
+        50,
+        "refined".to_string(),
+        30,
+        serde_json::json!([]),
+    );
+    db.insert_prompt(&record).await.unwrap();
+
+    // Empty user_ids = all users
+    let report = db.get_team_report(&[], "all", None).await.unwrap();
+    assert_eq!(report.total_prompts, 1);
+    assert_eq!(report.member_breakdown.len(), 1);
+    assert_eq!(report.member_breakdown[0].user_id, "solo_user");
 }

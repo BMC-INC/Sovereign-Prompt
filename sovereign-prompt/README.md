@@ -5,7 +5,7 @@
 <img src="https://img.shields.io/badge/RUST-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
 <img src="https://img.shields.io/badge/MCP-Native-6c5ce7?style=for-the-badge" alt="MCP Native" />
 <img src="https://img.shields.io/badge/Zero%20Unsafe%20Code-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Zero Unsafe Code" />
-<img src="https://img.shields.io/badge/56%20Tests-2ecc71?style=for-the-badge" alt="56 Tests" />
+<img src="https://img.shields.io/badge/63%20Tests-2ecc71?style=for-the-badge" alt="63 Tests" />
 
 <br><br>
 
@@ -64,7 +64,7 @@ The entire pipeline is **deterministic** — no randomness, no LLM calls, no net
 
 | Module | Lines | Responsibility |
 |:-------|------:|:---------------|
-| `server.rs` | ~600 | MCP `ServerHandler` impl. 12 tools with JSON schema validation. Routes injection modes (warn/rewrite/reject). Bridges analyzer, optimizer, templates, tokenizer, crypto, governance, and DB. |
+| `server.rs` | ~600 | MCP `ServerHandler` impl. 15 tools with JSON schema validation. Routes injection modes (warn/rewrite/reject). Bridges analyzer, optimizer, templates, tokenizer, crypto, governance, and DB. |
 | `analyzer.rs` | ~350 | 9 heuristic checks, each accepting `&HeuristicsConfig`. `analyze()` for backward compat, `analyze_with_config()` for runtime config, `analyze_explained()` for full transparency mode. |
 | `optimizer.rs` | ~110 | Politeness stripping via compiled regex (`OnceLock`). Whitespace normalization. Format instruction injection. 3-variant generation (Precision/Creative/Concise). Injection pattern stripping for rewrite mode. |
 | `config.rs` | ~120 | `SovereignConfig` deserialized from TOML. `HeuristicsConfig` with per-check toggles, 5 thresholds, custom pattern lists. `InjectionMode` enum (Warn/Rewrite/Reject). Loads from `SOVEREIGN_CONFIG_PATH` env or `./sovereign_prompt.toml`, falls back to sane defaults. |
@@ -209,7 +209,7 @@ sovereign-prompt/
 │   ├── how-it-works.gif
 │   └── optimization-pipeline.gif
 └── tests/
-    └── integration_test.rs    # 56 tests
+    └── integration_test.rs    # 63 tests
 ```
 
 ---
@@ -221,7 +221,7 @@ cargo test
 ```
 
 ```
-running 56 tests
+running 63 tests
 test config_disabled_check_skips_analysis ... ok
 test config_custom_threshold_changes_behavior ... ok
 test config_custom_patterns_detected ... ok
@@ -234,7 +234,7 @@ test db_savings_report_query ... ok
 test db_savings_report_cost_calculation ... ok
 test db_savings_report_empty_state ... ok
 ...
-test result: ok. 56 passed; 0 failed
+test result: ok. 63 passed; 0 failed
 ```
 
 Test coverage spans: tokenizer (4), analyzer (10), optimizer (6), templates (1), types (3), database (11), crypto (7), governance (5), config (5), explain mode (3), savings report (3).

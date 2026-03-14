@@ -105,6 +105,9 @@ impl PromptAnalyzer {
             check_governance_policy(prompt, &mut feedback);
         }
 
+        // Run custom checks (user-defined plugins)
+        run_custom_checks(prompt, &mut feedback, config);
+
         feedback
     }
 
@@ -347,6 +350,27 @@ fn build_explanations(prompt: &str, config: &HeuristicsConfig) -> Vec<HeuristicE
         });
     }
 
+    // Custom checks
+    for check in &config.custom_checks {
+        if let Ok(re) = Regex::new(&check.pattern) {
+            let matches: Vec<String> = re
+                .find_iter(prompt)
+                .map(|m| m.as_str().to_string())
+                .collect();
+            explanations.push(HeuristicExplanation {
+                check_name: format!("custom:{}", check.name),
+                fired: !matches.is_empty(),
+                reason: if matches.is_empty() {
+                    None
+                } else {
+                    Some(format!("Matched {} patterns", matches.len()))
+                },
+                matched_patterns: matches,
+                threshold: Some(format!("Regex: {}", check.pattern)),
+            });
+        }
+    }
+
     explanations
 }
 
@@ -545,4 +569,28 @@ fn check_ambiguous_pronouns(
 fn check_governance_policy(prompt: &str, feedback: &mut Vec<FeedbackItem>) {
     let gov_feedback = GovernancePolicy::validate_prompt(prompt);
     feedback.extend(gov_feedback);
+}
+
+fn run_custom_checks(prompt: &str, feedback: &mut Vec<FeedbackItem>, config: &HeuristicsConfig) {
+    for check in &config.custom_checks {
+        if let Ok(re) = Regex::new(&check.pattern) {
+            let matches: Vec<String> = re
+                .find_iter(prompt)
+                .map(|m| m.as_str().to_string())
+                .collect();
+            if !matches.is_empty() {
+                let severity = match check.severity.to_lowercase().as_str() {
+                    "critical" | "crit" => Severity::Critical,
+                    "info" => Severity::Info,
+                    _ => Severity::Warning,
+                };
+                feedback.push(FeedbackItem {
+                    category: format!("Custom: {}", check.name),
+                    severity,
+                    message: format!("{}: {}", check.message, matches.join(", ")),
+                    suggestion: check.suggestion.clone(),
+                });
+            }
+        }
+    }
 }

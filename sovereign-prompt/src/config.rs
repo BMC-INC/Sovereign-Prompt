@@ -47,6 +47,24 @@ pub struct HeuristicsConfig {
     pub extra_injection_patterns: Vec<String>,
     #[serde(default)]
     pub extra_polite_terms: Vec<String>,
+
+    #[serde(default)]
+    pub custom_checks: Vec<CustomCheck>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomCheck {
+    pub name: String,
+    pub pattern: String,
+    #[serde(default = "default_custom_severity")]
+    pub severity: String,
+    pub message: String,
+    #[serde(default)]
+    pub suggestion: Option<String>,
+}
+
+fn default_custom_severity() -> String {
+    "warning".to_string()
 }
 
 impl Default for HeuristicsConfig {
@@ -69,6 +87,7 @@ impl Default for HeuristicsConfig {
             extra_vague_terms: Vec::new(),
             extra_injection_patterns: Vec::new(),
             extra_polite_terms: Vec::new(),
+            custom_checks: Vec::new(),
         }
     }
 }

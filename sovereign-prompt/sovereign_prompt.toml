@@ -25,6 +25,21 @@ format_min_length = 30           # Minimum chars before flagging missing format
 # extra_injection_patterns = ["bypass safety"]
 # extra_polite_terms = ["excuse me"]
 
+# Custom heuristic plugins — define your own regex-based checks
+# [[heuristics.custom_checks]]
+# name = "jargon_detector"
+# pattern = "(?i)(synergy|leverage|paradigm|disrupt)"
+# severity = "warning"
+# message = "Corporate jargon detected"
+# suggestion = "Use plain, direct language for better LLM results"
+
+# [[heuristics.custom_checks]]
+# name = "url_detector"
+# pattern = "https?://\\S+"
+# severity = "info"
+# message = "URL detected in prompt"
+# suggestion = "Consider fetching URL content separately and providing it as context"
+
 [injection]
 # Injection handling mode: "warn", "rewrite", or "reject"
 mode = "warn"

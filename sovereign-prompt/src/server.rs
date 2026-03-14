@@ -6,7 +6,7 @@ use crate::governance::GovernancePolicy;
 use crate::optimizer::PromptOptimizer;
 use crate::templates::PromptTemplateLibrary;
 use crate::tokenizer::{Tokenizer, DEFAULT_TOKEN_MODEL};
-use crate::types::{AuditLogEntry, ModelTokenSummary, OptimizeResponse, PromptRecord};
+use crate::types::{AuditLogEntry, LearningSignal, ModelTokenSummary, OptimizeResponse, PromptRecord};
 use anyhow::Result;
 use chrono::Utc;
 use rmcp::model::*;
@@ -267,6 +267,72 @@ impl SovereignPromptServer {
                             }
                         },
                         "required": ["user_id"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
+            Tool::new(
+                "rate_optimization",
+                "Rate an optimization as positive or negative, enabling the learning feedback loop.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "prompt_id": {
+                                "type": "string",
+                                "description": "The prompt ID to rate"
+                            },
+                            "signal": {
+                                "type": "string",
+                                "description": "Rating: 'positive' or 'negative'"
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Optional comment explaining the rating"
+                            },
+                            "actor": {
+                                "type": "string",
+                                "description": "Who is rating (defaults to 'anonymous')"
+                            }
+                        },
+                        "required": ["prompt_id", "signal"]
+                    }))
+                    .unwrap(),
+                ),
+            ),
+            Tool::new(
+                "learning_insights",
+                "Get learning insights from rated optimizations — best domains, satisfaction rate, recommendations.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "user_id": {
+                                "type": "string",
+                                "description": "Optional user ID to filter insights"
+                            }
+                        }
+                    }))
+                    .unwrap(),
+                ),
+            ),
+            Tool::new(
+                "team_report",
+                "Generate a team-level analytics report aggregating savings across multiple users.",
+                Arc::new(
+                    serde_json::from_value::<JsonObject>(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "user_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of user IDs to include. If empty, aggregates all users."
+                            },
+                            "period": {
+                                "type": "string",
+                                "description": "Time period: 7d, 30d, 90d, or all (default: 30d)"
+                            }
+                        }
                     }))
                     .unwrap(),
                 ),
@@ -860,6 +926,129 @@ impl SovereignPromptServer {
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
+
+    async fn handle_rate_optimization(
+        &self,
+        args: &JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let prompt_id = args
+            .get("prompt_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'prompt_id' parameter", None))?
+            .to_string();
+
+        let signal = args
+            .get("signal")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("missing 'signal' parameter", None))?
+            .to_string();
+
+        if signal != "positive" && signal != "negative" {
+            return Err(ErrorData::invalid_params(
+                "signal must be 'positive' or 'negative'",
+                None,
+            ));
+        }
+
+        // Verify prompt exists
+        self.db
+            .get_prompt_by_id(&prompt_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .ok_or_else(|| ErrorData::invalid_params("prompt not found", None))?;
+
+        let comment = args.get("comment").and_then(|v| v.as_str()).map(String::from);
+        let actor = args
+            .get("actor")
+            .and_then(|v| v.as_str())
+            .unwrap_or("anonymous")
+            .to_string();
+
+        let learning_signal = LearningSignal {
+            id: Uuid::new_v4().to_string(),
+            prompt_id: prompt_id.clone(),
+            signal: signal.clone(),
+            comment: comment.clone(),
+            actor: actor.clone(),
+            created_at: Utc::now(),
+        };
+
+        self.db
+            .insert_learning_signal(&learning_signal)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        // Audit log
+        let audit = AuditLogEntry {
+            id: Uuid::new_v4().to_string(),
+            prompt_id: prompt_id.clone(),
+            action: format!("rated_{}", signal),
+            actor: actor.clone(),
+            detail: serde_json::json!({
+                "signal": signal,
+                "comment": comment,
+            }),
+            created_at: Utc::now(),
+        };
+        let _ = self.db.insert_audit_log(&audit).await;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::json!({
+                "status": "rated",
+                "prompt_id": prompt_id,
+                "signal": signal,
+                "actor": actor,
+            })
+            .to_string(),
+        )]))
+    }
+
+    async fn handle_learning_insights(
+        &self,
+        args: &JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let user_id = args.get("user_id").and_then(|v| v.as_str());
+
+        let insights = self
+            .db
+            .get_learning_insights(user_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let json = serde_json::to_string_pretty(&insights)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    async fn handle_team_report(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
+        let user_ids: Vec<String> = args
+            .get("user_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let period = args
+            .get("period")
+            .and_then(|v| v.as_str())
+            .unwrap_or("30d")
+            .to_string();
+
+        let report = self
+            .db
+            .get_team_report(&user_ids, &period, None)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
 }
 
 impl ServerHandler for SovereignPromptServer {
@@ -905,6 +1094,9 @@ impl ServerHandler for SovereignPromptServer {
             "sign_optimization" => self.handle_sign_optimization(&args).await,
             "verify_signature" => self.handle_verify_signature(&args).await,
             "savings_report" => self.handle_savings_report(&args).await,
+            "rate_optimization" => self.handle_rate_optimization(&args).await,
+            "learning_insights" => self.handle_learning_insights(&args).await,
+            "team_report" => self.handle_team_report(&args).await,
             _ => Err(ErrorData::invalid_params(
                 format!("unknown tool: {}", request.name),
                 None,

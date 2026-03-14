@@ -9,8 +9,8 @@
 
 <br>
 
-<img src="https://img.shields.io/badge/56%20Tests%20Passing-2ecc71?style=for-the-badge" alt="56 Tests" />
-<img src="https://img.shields.io/badge/12%20MCP%20Tools-fd79a8?style=for-the-badge" alt="12 MCP Tools" />
+<img src="https://img.shields.io/badge/63%20Tests%20Passing-2ecc71?style=for-the-badge" alt="63 Tests" />
+<img src="https://img.shields.io/badge/15%20MCP%20Tools-fd79a8?style=for-the-badge" alt="15 MCP Tools" />
 <img src="https://img.shields.io/badge/9%20Heuristic%20Checks-a29bfe?style=for-the-badge" alt="9 Heuristics" />
 <img src="https://img.shields.io/badge/Local%20Only-No%20Cloud-ff7675?style=for-the-badge" alt="Local Only" />
 
@@ -121,7 +121,7 @@ Every check can be toggled on or off individually. Thresholds are adjustable. Yo
 
 ---
 
-## The Toolbelt — 12 MCP Tools
+## The Toolbelt — 15 MCP Tools
 
 | Tool | What It Does |
 |:-----|:-------------|
@@ -137,6 +137,9 @@ Every check can be toggled on or off individually. Thresholds are adjustable. Yo
 | **`get_audit_trail`** | Every action on every prompt — creation, approval, rejection, signing, output capture — with timestamps and actors. |
 | **`sign_optimization`** | Cryptographically sign a prompt record with HMAC-SHA256. Tamper-evident, verifiable, non-repudiable. |
 | **`verify_signature`** | Verify the signature and full hash chain — content hash, output hash, and cryptographic binding. |
+| **`rate_optimization`** | Rate an optimization as positive or negative. Feeds the learning loop that tracks what works and what doesn't. |
+| **`learning_insights`** | Get learning insights from rated optimizations — best domains, satisfaction rate, and actionable recommendations. |
+| **`team_report`** | Team-level analytics aggregating savings across multiple users with per-member breakdowns and cost estimates. |
 
 ---
 
@@ -262,6 +265,14 @@ format_min_length = 30
 # extra_injection_patterns = ["bypass safety"]
 # extra_polite_terms = ["excuse me"]
 
+# Custom heuristic plugins — your own regex-based checks
+# [[heuristics.custom_checks]]
+# name = "jargon_detector"
+# pattern = "(?i)(synergy|leverage|paradigm)"
+# severity = "warning"
+# message = "Corporate jargon detected"
+# suggestion = "Use plain, direct language"
+
 [injection]
 mode = "warn"   # "warn" | "rewrite" | "reject"
 ```
@@ -294,7 +305,7 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 | **Crypto** | `sha2` + `hmac` — SHA-256 hashing, HMAC-SHA256 signing |
 | **Config** | `toml` — fully configurable heuristics and injection modes |
 | **Runtime** | `tokio` — full async with graceful signal handling |
-| **Tests** | 56 integration tests across all modules |
+| **Tests** | 63 integration tests across all modules |
 
 ---
 
@@ -325,9 +336,9 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 - [x] Cryptographic audit trails (SHA-256 + HMAC-SHA256)
 - [x] SSE transport + WebSocket dashboard
 - [x] `#![deny(unsafe_code)]` + security documentation
-- [ ] Learning feedback loop — optimize based on captured outputs
-- [ ] Custom heuristic plugins (user-defined check functions)
-- [ ] Team-level analytics and shared savings dashboards
+- [x] Learning feedback loop — rate optimizations, get insights, improve over time
+- [x] Custom heuristic plugins — define your own regex checks in TOML
+- [x] Team-level analytics — aggregate savings across your organization
 
 ---
 
