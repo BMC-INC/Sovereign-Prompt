@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  basePath: '/promptgen',
+  basePath: '/sovereign-prompt',
 };
 
 export default nextConfig;
