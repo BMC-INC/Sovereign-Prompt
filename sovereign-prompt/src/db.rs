@@ -335,11 +335,7 @@ impl Database {
         }
     }
 
-    pub async fn update_approval_status(
-        &self,
-        prompt_id: &str,
-        status: &str,
-    ) -> Result<()> {
+    pub async fn update_approval_status(&self, prompt_id: &str, status: &str) -> Result<()> {
         sqlx::query("UPDATE prompts SET approval_status = ? WHERE id = ?")
             .bind(status)
             .bind(prompt_id)
@@ -547,8 +543,10 @@ impl Database {
         } else {
             (
                 "SELECT COUNT(*) as cnt FROM learning_signals".to_string(),
-                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'positive'".to_string(),
-                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'negative'".to_string(),
+                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'positive'"
+                    .to_string(),
+                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'negative'"
+                    .to_string(),
             )
         };
 
@@ -642,7 +640,8 @@ impl Database {
         // Generate recommendations
         let mut recommendations = Vec::new();
         if positive_rate > 80.0 {
-            recommendations.push("High satisfaction rate — current heuristics are well-tuned.".to_string());
+            recommendations
+                .push("High satisfaction rate — current heuristics are well-tuned.".to_string());
         } else if positive_rate < 50.0 && total > 5 {
             recommendations.push("Low satisfaction rate — consider adjusting thresholds or disabling aggressive checks.".to_string());
         }
@@ -659,7 +658,9 @@ impl Database {
             ));
         }
         if recommendations.is_empty() {
-            recommendations.push("Not enough data yet. Rate more optimizations to unlock insights.".to_string());
+            recommendations.push(
+                "Not enough data yet. Rate more optimizations to unlock insights.".to_string(),
+            );
         }
 
         Ok(LearningInsights {
@@ -807,7 +808,8 @@ impl Database {
             })
             .collect();
 
-        let team_members: Vec<String> = member_breakdown.iter().map(|m| m.user_id.clone()).collect();
+        let team_members: Vec<String> =
+            member_breakdown.iter().map(|m| m.user_id.clone()).collect();
 
         // Daily trend
         let trend_query = format!(

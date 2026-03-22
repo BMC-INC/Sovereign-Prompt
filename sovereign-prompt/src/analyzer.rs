@@ -41,7 +41,9 @@ const POLITE_TERMS: &[&str] = &[
     "thanks",
 ];
 
-const ACTION_WORDS: &[&str] = &["fix", "update", "change", "modify", "edit", "improve", "make"];
+const ACTION_WORDS: &[&str] = &[
+    "fix", "update", "change", "modify", "edit", "improve", "make",
+];
 
 const CONJUNCTIONS: &[&str] = &[
     "and then",
@@ -129,7 +131,11 @@ fn build_explanations(prompt: &str, config: &HeuristicsConfig) -> Vec<HeuristicE
     // 1. Vagueness
     {
         let mut all_terms: Vec<&str> = VAGUE_TERMS.to_vec();
-        let extra: Vec<&str> = config.extra_vague_terms.iter().map(|s| s.as_str()).collect();
+        let extra: Vec<&str> = config
+            .extra_vague_terms
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
         all_terms.extend(extra);
         let found: Vec<String> = all_terms
             .iter()
@@ -217,7 +223,11 @@ fn build_explanations(prompt: &str, config: &HeuristicsConfig) -> Vec<HeuristicE
     // 4. Politeness
     {
         let mut all_terms: Vec<&str> = POLITE_TERMS.to_vec();
-        let extra: Vec<&str> = config.extra_polite_terms.iter().map(|s| s.as_str()).collect();
+        let extra: Vec<&str> = config
+            .extra_polite_terms
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
         all_terms.extend(extra);
         let found: Vec<String> = all_terms
             .iter()
@@ -260,7 +270,10 @@ fn build_explanations(prompt: &str, config: &HeuristicsConfig) -> Vec<HeuristicE
                 Some(format!("Found {} injection patterns", found.len()))
             },
             matched_patterns: found,
-            threshold: Some(format!("Any of {} injection patterns present", all_patterns.len())),
+            threshold: Some(format!(
+                "Any of {} injection patterns present",
+                all_patterns.len()
+            )),
         });
     }
 
@@ -341,7 +354,10 @@ fn build_explanations(prompt: &str, config: &HeuristicsConfig) -> Vec<HeuristicE
             check_name: "governance_policy".to_string(),
             fired,
             reason: if fired {
-                Some(format!("Found {} governance violations", gov_feedback.len()))
+                Some(format!(
+                    "Found {} governance violations",
+                    gov_feedback.len()
+                ))
             } else {
                 None
             },
@@ -427,7 +443,11 @@ fn check_redundancy(prompt: &str, feedback: &mut Vec<FeedbackItem>, config: &Heu
     }
 }
 
-fn check_missing_context(prompt: &str, feedback: &mut Vec<FeedbackItem>, config: &HeuristicsConfig) {
+fn check_missing_context(
+    prompt: &str,
+    feedback: &mut Vec<FeedbackItem>,
+    config: &HeuristicsConfig,
+) {
     let lower = prompt.to_lowercase();
     let has_action = ACTION_WORDS.iter().any(|w| lower.contains(w));
     let has_specifics = prompt.len() > config.context_min_length;

@@ -1,2 +1,22 @@
 node_modules/
 .env
+.env.*
+.vercel/
+
+# Rust
+target/
+*.db
+*.db-shm
+*.db-wal
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+*.log

@@ -6,7 +6,9 @@ use crate::governance::GovernancePolicy;
 use crate::optimizer::PromptOptimizer;
 use crate::templates::PromptTemplateLibrary;
 use crate::tokenizer::{Tokenizer, DEFAULT_TOKEN_MODEL};
-use crate::types::{AuditLogEntry, LearningSignal, ModelTokenSummary, OptimizeResponse, PromptRecord};
+use crate::types::{
+    AuditLogEntry, LearningSignal, ModelTokenSummary, OptimizeResponse, PromptRecord,
+};
 use anyhow::Result;
 use chrono::Utc;
 use rmcp::model::*;
@@ -383,9 +385,7 @@ impl SovereignPromptServer {
                 // Check for injection patterns before proceeding
                 let injection_feedback =
                     PromptAnalyzer::analyze_with_config(&prompt, &self.config.heuristics);
-                let has_injection = injection_feedback
-                    .iter()
-                    .any(|f| f.category == "Security");
+                let has_injection = injection_feedback.iter().any(|f| f.category == "Security");
                 if has_injection {
                     return Err(ErrorData::invalid_params(
                         "Prompt rejected: injection pattern detected. Injection mode is set to 'reject'.",
@@ -394,9 +394,7 @@ impl SovereignPromptServer {
                 }
                 prompt.clone()
             }
-            InjectionMode::Rewrite => {
-                PromptOptimizer::strip_injection_patterns(&prompt)
-            }
+            InjectionMode::Rewrite => PromptOptimizer::strip_injection_patterns(&prompt),
             InjectionMode::Warn => prompt.clone(),
         };
 
@@ -658,7 +656,10 @@ impl SovereignPromptServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    async fn handle_governance_check(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
+    async fn handle_governance_check(
+        &self,
+        args: &JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
         let prompt_id = args
             .get("prompt_id")
             .and_then(|v| v.as_str())
@@ -755,10 +756,7 @@ impl SovereignPromptServer {
         )]))
     }
 
-    async fn handle_get_audit_trail(
-        &self,
-        args: &JsonObject,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn handle_get_audit_trail(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
         let prompt_id = args
             .get("prompt_id")
             .and_then(|v| v.as_str())
@@ -957,7 +955,10 @@ impl SovereignPromptServer {
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
             .ok_or_else(|| ErrorData::invalid_params("prompt not found", None))?;
 
-        let comment = args.get("comment").and_then(|v| v.as_str()).map(String::from);
+        let comment = args
+            .get("comment")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let actor = args
             .get("actor")
             .and_then(|v| v.as_str())

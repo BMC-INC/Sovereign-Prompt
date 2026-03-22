@@ -1,4 +1,5 @@
 use sovereign_prompt::analyzer::PromptAnalyzer;
+use sovereign_prompt::config::CustomCheck;
 use sovereign_prompt::config::{HeuristicsConfig, InjectionMode, SovereignConfig};
 use sovereign_prompt::crypto::CryptoEngine;
 use sovereign_prompt::db::Database;
@@ -6,7 +7,6 @@ use sovereign_prompt::governance::GovernancePolicy;
 use sovereign_prompt::optimizer::PromptOptimizer;
 use sovereign_prompt::templates::PromptTemplateLibrary;
 use sovereign_prompt::tokenizer::Tokenizer;
-use sovereign_prompt::config::CustomCheck;
 use sovereign_prompt::types::{AuditLogEntry, LearningSignal, PromptRecord};
 
 // ── Tokenizer tests ──
@@ -464,8 +464,7 @@ fn governance_pii_warning_pending() {
 
 #[test]
 fn analyzer_includes_governance_check() {
-    let feedback =
-        PromptAnalyzer::analyze("Store the password: hunter2 and api_key=sk-secret123");
+    let feedback = PromptAnalyzer::analyze("Store the password: hunter2 and api_key=sk-secret123");
     assert!(feedback.iter().any(|f| f.category == "Governance"));
 }
 
@@ -572,10 +571,8 @@ fn config_custom_patterns_detected() {
     let mut config = HeuristicsConfig::default();
     config.extra_vague_terms = vec!["foobar".to_string()];
 
-    let feedback = PromptAnalyzer::analyze_with_config(
-        "Please do foobar with the system for me",
-        &config,
-    );
+    let feedback =
+        PromptAnalyzer::analyze_with_config("Please do foobar with the system for me", &config);
     let has_vague = feedback
         .iter()
         .any(|f| f.category == "Clarity" && f.message.contains("foobar"));
@@ -618,10 +615,8 @@ fn config_injection_reject_mode_detects() {
 #[test]
 fn explain_mode_returns_all_nine_explanations() {
     let config = HeuristicsConfig::default();
-    let (_, explanations) = PromptAnalyzer::analyze_explained(
-        "Do something with the stuff somehow please",
-        &config,
-    );
+    let (_, explanations) =
+        PromptAnalyzer::analyze_explained("Do something with the stuff somehow please", &config);
     assert_eq!(
         explanations.len(),
         9,
@@ -643,10 +638,8 @@ fn explain_mode_returns_all_nine_explanations() {
 #[test]
 fn explain_mode_fired_accuracy() {
     let config = HeuristicsConfig::default();
-    let (_, explanations) = PromptAnalyzer::analyze_explained(
-        "Return a JSON object with name and email",
-        &config,
-    );
+    let (_, explanations) =
+        PromptAnalyzer::analyze_explained("Return a JSON object with name and email", &config);
 
     // This clean prompt should not fire vagueness
     let vagueness = explanations
@@ -668,10 +661,8 @@ fn explain_mode_with_config_interaction() {
     let mut config = HeuristicsConfig::default();
     config.politeness = false;
 
-    let (_, explanations) = PromptAnalyzer::analyze_explained(
-        "Please kindly help me write a function",
-        &config,
-    );
+    let (_, explanations) =
+        PromptAnalyzer::analyze_explained("Please kindly help me write a function", &config);
 
     let politeness = explanations
         .iter()
@@ -858,10 +849,8 @@ fn custom_check_does_not_fire_on_no_match() {
         suggestion: None,
     }];
 
-    let feedback = PromptAnalyzer::analyze_with_config(
-        "Write a sorting algorithm in Rust",
-        &config,
-    );
+    let feedback =
+        PromptAnalyzer::analyze_with_config("Write a sorting algorithm in Rust", &config);
     let has_custom = feedback.iter().any(|f| f.category.starts_with("Custom:"));
     assert!(!has_custom, "Should not fire custom check on clean prompt");
 }
@@ -881,7 +870,10 @@ fn custom_check_appears_in_explain_mode() {
     let custom_exp = explanations
         .iter()
         .find(|e| e.check_name == "custom:test_plugin");
-    assert!(custom_exp.is_some(), "Custom check should appear in explanations");
+    assert!(
+        custom_exp.is_some(),
+        "Custom check should appear in explanations"
+    );
     assert!(custom_exp.unwrap().fired, "Custom check should fire");
 }
 
