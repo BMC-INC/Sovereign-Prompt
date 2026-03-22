@@ -4,6 +4,31 @@ All notable changes to SovereignPrompt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-03-22
+
+### Added
+
+- Dual-database support: SQLite (local default) + Postgres (remote/Docker) via sqlx `Any` driver
+- `DATABASE_URL` env var for Postgres connection (backward compatible with `SOVEREIGN_DB_PATH`)
+- Dockerfile (multi-stage Rust build) and docker-compose.yml with Postgres 16
+- `/health` endpoint on dashboard server for Docker healthchecks
+- Auth module (`src/auth.rs`) for future SSE API key authentication
+- GitHub Actions CI: test, clippy, fmt, security audit
+- GitHub Actions release workflow: auto-builds binaries for Linux/macOS/Windows on tag push
+- MIT LICENSE file, CHANGELOG, CONTRIBUTING.md
+
+### Changed
+
+- Upgraded sqlx 0.7 → 0.8 (resolves RUSTSEC-2024-0363 and RUSTSEC-2026-0049 audit advisories)
+- Upgraded axum 0.7 → 0.8 (unifies dependency tree with rmcp)
+- Improved `.gitignore` with `target/`, `.DS_Store`, `*.db`, IDE files
+
+### Fixed
+
+- SQL injection vulnerability in `get_learning_insights` — refactored to parameterized queries
+- Nullable column handling for sqlx `AnyRow` type strictness (`output`, `output_token_count`)
+- `DATE()` SQL function replaced with `SUBSTR()` for cross-database compatibility
+
 ## [0.2.0] - 2026-03-01
 
 ### Added

@@ -13,6 +13,8 @@
 <img src="https://img.shields.io/badge/15%20MCP%20Tools-fd79a8?style=for-the-badge" alt="15 MCP Tools" />
 <img src="https://img.shields.io/badge/9%20Heuristic%20Checks-a29bfe?style=for-the-badge" alt="9 Heuristics" />
 <img src="https://img.shields.io/badge/Local%20Only-No%20Cloud-ff7675?style=for-the-badge" alt="Local Only" />
+<img src="https://img.shields.io/badge/Docker%20Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Ready" />
+<img src="https://img.shields.io/badge/SQLite%20%2B%20Postgres-336791?style=for-the-badge&logo=postgresql&logoColor=white" alt="SQLite + Postgres" />
 
 <br><br>
 
@@ -274,7 +276,7 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 | **Language** | Rust (2021 edition), `#![deny(unsafe_code)]` |
 | **Protocol** | MCP via `rmcp` — stdio (default) or SSE transport |
 | **Tokenization** | `tiktoken-rs` — cl100k_base, o200k_base, p50k_base, r50k_base |
-| **Persistence** | SQLite via `sqlx` — async, zero compile-time DB |
+| **Persistence** | SQLite or Postgres via `sqlx` Any driver — set `DATABASE_URL` for Postgres |
 | **Dashboard** | `axum` with WebSocket streaming |
 | **Crypto** | `sha2` + `hmac` — SHA-256 hashing, HMAC-SHA256 signing |
 | **Config** | `toml` — fully configurable heuristics, plugins, and injection modes |
@@ -287,7 +289,8 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `SOVEREIGN_DB_PATH` | `./sovereign_prompt.db` | SQLite database path |
+| `DATABASE_URL` | _(none)_ | Database URL — `postgres://...` for Postgres, `sqlite://...` for SQLite. Takes priority over `SOVEREIGN_DB_PATH`. |
+| `SOVEREIGN_DB_PATH` | `./sovereign_prompt.db` | SQLite database path (used when `DATABASE_URL` is not set) |
 | `SOVEREIGN_CONFIG_PATH` | `./sovereign_prompt.toml` | TOML config path |
 | `SOVEREIGN_MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `sse` |
 | `SOVEREIGN_MCP_SSE_ADDR` | `127.0.0.1:8790` | SSE bind address |
@@ -295,6 +298,39 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 | `SOVEREIGN_DASHBOARD_ONLY` | `false` | Dashboard-only mode |
 | `SOVEREIGN_HMAC_KEY` | _(dev default)_ | HMAC signing key (**change in production**) |
 | `RUST_LOG` | _(none)_ | Log level: `info`, `debug`, `trace` |
+
+---
+
+## Docker Deployment
+
+Run SovereignPrompt with Postgres in one command:
+
+```bash
+docker-compose up --build
+```
+
+This starts:
+
+- **SovereignPrompt** in SSE mode on `http://localhost:8790/sse`
+- **Postgres 16** with automatic schema migration
+- **Dashboard** on `http://localhost:8787`
+- **Health check** at `http://localhost:8787/health`
+
+For custom configuration:
+
+```bash
+SOVEREIGN_HMAC_KEY=your-production-key docker-compose up --build
+```
+
+Or run standalone with Docker:
+
+```bash
+docker build -t sovereign-prompt ./sovereign-prompt
+docker run -p 8790:8790 -p 8787:8787 \
+  -e DATABASE_URL=postgres://user:pass@host:5432/db \
+  -e SOVEREIGN_MCP_TRANSPORT=sse \
+  sovereign-prompt
+```
 
 ---
 

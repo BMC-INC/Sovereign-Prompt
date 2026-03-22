@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "sovereign-prompt": {
+      "command": "/usr/local/bin/sovereign-prompt"
+    }
+  }
+}
