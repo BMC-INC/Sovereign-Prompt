@@ -26,9 +26,9 @@ pub async fn run(db: Arc<Database>, addr: SocketAddr) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/health", get(health_handler))
-        .route("/api/stats/:user_id", get(stats_handler))
-        .route("/api/history/:user_id", get(history_handler))
-        .route("/ws/analytics/:user_id", get(websocket_handler))
+        .route("/api/stats/{user_id}", get(stats_handler))
+        .route("/api/history/{user_id}", get(history_handler))
+        .route("/ws/analytics/{user_id}", get(websocket_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
