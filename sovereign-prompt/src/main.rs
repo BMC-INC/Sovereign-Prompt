@@ -13,10 +13,11 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let db_path =
-        std::env::var("SOVEREIGN_DB_PATH").unwrap_or_else(|_| "./sovereign_prompt.db".to_string());
+    let database_url = std::env::var("DATABASE_URL")
+        .or_else(|_| std::env::var("SOVEREIGN_DB_PATH").map(|p| format!("sqlite://{}?mode=rwc", p)))
+        .unwrap_or_else(|_| "sqlite://./sovereign_prompt.db?mode=rwc".to_string());
 
-    let db = Arc::new(db::Database::new(&db_path).await?);
+    let db = Arc::new(db::Database::new(&database_url).await?);
     db.migrate().await?;
 
     let dashboard_addr = std::env::var("SOVEREIGN_DASHBOARD_ADDR")
