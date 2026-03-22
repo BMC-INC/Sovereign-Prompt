@@ -12,7 +12,7 @@
 <img src="https://img.shields.io/badge/63%20Tests%20Passing-2ecc71?style=for-the-badge" alt="63 Tests" />
 <img src="https://img.shields.io/badge/15%20MCP%20Tools-fd79a8?style=for-the-badge" alt="15 MCP Tools" />
 <img src="https://img.shields.io/badge/9%20Heuristic%20Checks-a29bfe?style=for-the-badge" alt="9 Heuristics" />
-<img src="https://img.shields.io/badge/Local%20Only-No%20Cloud-ff7675?style=for-the-badge" alt="Local Only" />
+<img src="https://img.shields.io/badge/Local%20%2B%20Remote-ff7675?style=for-the-badge" alt="Local + Remote" />
 <img src="https://img.shields.io/badge/Docker%20Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Ready" />
 <img src="https://img.shields.io/badge/SQLite%20%2B%20Postgres-336791?style=for-the-badge&logo=postgresql&logoColor=white" alt="SQLite + Postgres" />
 
@@ -22,7 +22,9 @@
 
 ### Your prompts are bleeding tokens. We stop the bleed.
 
-**The first MCP-native prompt optimization engine. 9 heuristic checks, domain-aware refinement,<br>cryptographic audit trails, and real cost savings — all running locally in pure Rust.**
+**The first MCP-native prompt optimization engine. 9 heuristic checks, domain-aware refinement,<br>cryptographic audit trails, and real cost savings — pure Rust, zero telemetry, your infrastructure.**
+
+**v0.3.0** — Now supports SQLite + Postgres, Docker deployment, and every major MCP client.<br>Still zero cloud dependencies. Still zero telemetry. Your prompts never touch our servers.
 
 <br>
 
@@ -30,11 +32,51 @@ https://github.com/user-attachments/assets/ee2438e2-5f89-4dc3-8cd2-1f784a8844ab
 
 <br>
 
-[Get Started](#get-started) &#8226; [15 Tools](#the-toolbelt--15-mcp-tools) &#8226; [Security](./SECURITY.md) &#8226; [Developer Docs](./sovereign-prompt/README.md)
+[Works With](#works-with-any-mcp-client) &#8226; [Get Started](#get-started) &#8226; [15 Tools](#the-toolbelt--15-mcp-tools) &#8226; [Docker](#docker-deployment) &#8226; [Security](./SECURITY.md)
 
 <br>
 
 </div>
+
+---
+
+## What's New in v0.3.0
+
+> Previously local-only. Now runs everywhere — same engine, same privacy, more platforms.
+
+- **Dual database** — SQLite (local default) or Postgres (self-hosted/Docker). Set `DATABASE_URL` and go.
+- **Docker deployment** — `docker-compose up` gives you SovereignPrompt + Postgres in one command.
+- **Every MCP client** — Claude Code, Claude Desktop, Cursor, Windsurf, ChatGPT Desktop, VS Code, Zed, and more.
+- **Health endpoint** — `/health` on the dashboard for uptime monitoring.
+- **sqlx 0.8** — Latest database driver, resolved all actionable security advisories.
+- **CI/CD pipeline** — GitHub Actions for test, clippy, fmt, audit. Release workflow builds binaries on tag.
+- **Still zero telemetry. Still zero cloud. Your prompts stay yours.**
+
+See the full [CHANGELOG](./CHANGELOG.md) for details.
+
+---
+
+## Works With Any MCP Client
+
+SovereignPrompt speaks [MCP](https://modelcontextprotocol.io) — the open protocol adopted by every major AI platform. **Stdio** for local tools, **SSE** for remote/cloud deployments.
+
+| Platform | Transport | Status |
+|:---------|:---------:|:------:|
+| **Claude Code** | stdio | **Supported** |
+| **Claude Desktop** | stdio | **Supported** |
+| **Cursor** | stdio / SSE | **Supported** |
+| **Windsurf** | stdio / SSE | **Supported** |
+| **VS Code** (Copilot / Continue / Cline) | stdio | **Supported** |
+| **Zed** | stdio | **Supported** |
+| **ChatGPT Desktop** | stdio | **Supported** |
+| **Gemini CLI** | stdio | **Supported** |
+| **Goose CLI** | stdio | **Supported** |
+| **Continue.dev** | stdio | **Supported** |
+| **Replit** | SSE | **Supported** |
+| **Any SSE MCP Client** | SSE | **Supported** |
+| **Docker / Self-hosted** | SSE + Postgres | **Supported** |
+
+If it speaks MCP, it works with SovereignPrompt. No adapters. No plugins. Just connect.
 
 ---
 
@@ -115,7 +157,7 @@ No LLM in the loop. No API calls. No cloud. No latency. Pure deterministic Rust.
 
 | Feature | SovereignPrompt | Other MCP Prompt Tools |
 |:--------|:---------------:|:----------------------:|
-| Local-only, zero cloud | **Yes** | Usually sends to LLM |
+| Local or self-hosted, zero LLM calls | **Yes** | Usually sends to LLM |
 | Real token savings % with reports | **Yes** | No |
 | Cryptographic audit trail | **Yes** | No |
 | Built-in PII / governance engine | **Yes** | No |
@@ -208,9 +250,11 @@ Every check can be toggled on or off. Thresholds are adjustable. You can add you
 
 ---
 
-## Security
+## Security & Privacy
 
-SovereignPrompt is **local-only by design**. Zero outbound network calls. Zero telemetry. Zero cloud dependencies. Your prompts never leave your machine.
+SovereignPrompt **never phones home**. Whether you run it locally or deploy it on your own infrastructure with Docker — zero telemetry, zero analytics, zero outbound network calls. We never see your prompts. Your data lives on your machine or your server. Period.
+
+Even in Postgres/Docker mode, the database is **yours** — you host it, you own it, you control access. There is no SovereignPrompt cloud service. There never will be.
 
 - `#![deny(unsafe_code)]` enforced at the crate root — no escape hatches
 - SHA-256 content hashing for tamper detection on every optimization
