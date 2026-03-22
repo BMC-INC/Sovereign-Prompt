@@ -25,6 +25,7 @@ pub async fn run(db: Arc<Database>, addr: SocketAddr) -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(index_handler))
+        .route("/health", get(health_handler))
         .route("/api/stats/:user_id", get(stats_handler))
         .route("/api/history/:user_id", get(history_handler))
         .route("/ws/analytics/:user_id", get(websocket_handler))
@@ -37,6 +38,10 @@ pub async fn run(db: Arc<Database>, addr: SocketAddr) -> anyhow::Result<()> {
 
 async fn index_handler() -> Html<&'static str> {
     Html(DASHBOARD_HTML)
+}
+
+async fn health_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ok"}))
 }
 
 async fn stats_handler(
@@ -88,7 +93,8 @@ async fn analytics_socket(mut socket: WebSocket, db: Arc<Database>, user_id: Str
                             "type": "error",
                             "message": error.to_string(),
                         })
-                        .to_string(),
+                        .to_string()
+                        .into(),
                     ))
                     .await;
                 break;
@@ -104,7 +110,8 @@ async fn analytics_socket(mut socket: WebSocket, db: Arc<Database>, user_id: Str
                             "type": "error",
                             "message": error.to_string(),
                         })
-                        .to_string(),
+                        .to_string()
+                        .into(),
                     ))
                     .await;
                 break;
@@ -119,7 +126,7 @@ async fn analytics_socket(mut socket: WebSocket, db: Arc<Database>, user_id: Str
         });
 
         if socket
-            .send(Message::Text(payload.to_string()))
+            .send(Message::Text(payload.to_string().into()))
             .await
             .is_err()
         {

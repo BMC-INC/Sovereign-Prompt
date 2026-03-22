@@ -3,20 +3,28 @@ use crate::types::{
     PromptRecord, SavingsReport, TeamReport, UserStats,
 };
 use anyhow::Result;
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Row, SqlitePool};
+use sqlx::any::AnyPoolOptions;
+use sqlx::{AnyPool, Row};
 
 #[derive(Clone)]
 pub struct Database {
-    pool: SqlitePool,
+    pool: AnyPool,
 }
 
 impl Database {
-    pub async fn new(path: &str) -> Result<Self> {
-        let url = format!("sqlite://{}?mode=rwc", path);
-        let pool = SqlitePoolOptions::new()
+    pub async fn new(url: &str) -> Result<Self> {
+        sqlx::any::install_default_drivers();
+        let db_url = if url.starts_with("postgres://")
+            || url.starts_with("postgresql://")
+            || url.starts_with("sqlite://")
+        {
+            url.to_string()
+        } else {
+            format!("sqlite://{}?mode=rwc", url)
+        };
+        let pool = AnyPoolOptions::new()
             .max_connections(5)
-            .connect(&url)
+            .connect(&db_url)
             .await?;
         Ok(Self { pool })
     }
@@ -134,10 +142,11 @@ impl Database {
     }
 
     async fn add_column_if_missing(&self, query: &str) -> Result<()> {
-        let result = sqlx::query(query).execute(&self.pool).await;
+        let result: std::result::Result<sqlx::any::AnyQueryResult, sqlx::Error> =
+            sqlx::query(query).execute(&self.pool).await;
         if let Err(err) = result {
             let msg = err.to_string().to_lowercase();
-            if !msg.contains("duplicate column name") {
+            if !msg.contains("duplicate column name") && !msg.contains("already exists") {
                 return Err(err.into());
             }
         }
@@ -195,7 +204,7 @@ impl Database {
     }
 
     pub async fn get_user_stats(&self, user_id: &str) -> Result<UserStats> {
-        let row = sqlx::query(
+        let row: sqlx::any::AnyRow = sqlx::query(
             "SELECT
                 COUNT(*) as total_prompts,
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as total_tokens_saved,
@@ -208,7 +217,7 @@ impl Database {
         .await?;
 
         // Aggregate top issues from recent feedback
-        let feedback_rows = sqlx::query(
+        let feedback_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
             "SELECT analysis_feedback FROM prompts WHERE user_id = ? ORDER BY created_at DESC LIMIT 100",
         )
         .bind(user_id)
@@ -246,7 +255,7 @@ impl Database {
     }
 
     pub async fn get_recent_prompts(&self, user_id: &str, limit: i64) -> Result<Vec<PromptRecord>> {
-        let rows =
+        let rows: Vec<sqlx::any::AnyRow> =
             sqlx::query("SELECT * FROM prompts WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
                 .bind(user_id)
                 .bind(limit)
@@ -255,7 +264,7 @@ impl Database {
 
         let records = rows
             .into_iter()
-            .map(|r| {
+            .map(|r: sqlx::any::AnyRow| {
                 let feedback_str: String = r.get("analysis_feedback");
                 PromptRecord {
                     id: r.get("id"),
@@ -268,8 +277,8 @@ impl Database {
                     refined_token_count: r.get("refined_token_count"),
                     savings_percentage: r.get("savings_percentage"),
                     analysis_feedback: serde_json::from_str(&feedback_str).unwrap_or_default(),
-                    output: r.get("output"),
-                    output_token_count: r.get("output_token_count"),
+                    output: r.try_get("output").ok().flatten(),
+                    output_token_count: r.try_get("output_token_count").ok().flatten(),
                     created_at: r
                         .get::<String, _>("created_at")
                         .parse::<chrono::DateTime<chrono::Utc>>()
@@ -284,7 +293,7 @@ impl Database {
                         .try_get::<Option<String>, _>("signed_at")
                         .ok()
                         .flatten()
-                        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok()),
+                        .and_then(|s: String| s.parse::<chrono::DateTime<chrono::Utc>>().ok()),
                 }
             })
             .collect();
@@ -293,7 +302,7 @@ impl Database {
     }
 
     pub async fn get_prompt_by_id(&self, prompt_id: &str) -> Result<Option<PromptRecord>> {
-        let row = sqlx::query("SELECT * FROM prompts WHERE id = ?")
+        let row: Option<sqlx::any::AnyRow> = sqlx::query("SELECT * FROM prompts WHERE id = ?")
             .bind(prompt_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -312,8 +321,8 @@ impl Database {
                     refined_token_count: r.get("refined_token_count"),
                     savings_percentage: r.get("savings_percentage"),
                     analysis_feedback: serde_json::from_str(&feedback_str).unwrap_or_default(),
-                    output: r.get("output"),
-                    output_token_count: r.get("output_token_count"),
+                    output: r.try_get("output").ok().flatten(),
+                    output_token_count: r.try_get("output_token_count").ok().flatten(),
                     created_at: r
                         .get::<String, _>("created_at")
                         .parse::<chrono::DateTime<chrono::Utc>>()
@@ -328,7 +337,7 @@ impl Database {
                         .try_get::<Option<String>, _>("signed_at")
                         .ok()
                         .flatten()
-                        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok()),
+                        .and_then(|s: String| s.parse::<chrono::DateTime<chrono::Utc>>().ok()),
                 }))
             }
             None => Ok(None),
@@ -402,7 +411,7 @@ impl Database {
         let date_str = date_filter.to_rfc3339();
 
         // Aggregate totals
-        let row = sqlx::query(
+        let row: sqlx::any::AnyRow = sqlx::query(
             "SELECT
                 COUNT(*) as total_prompts,
                 COALESCE(SUM(original_token_count), 0) as total_original,
@@ -448,7 +457,7 @@ impl Database {
             .collect();
 
         // Top issues
-        let feedback_rows = sqlx::query(
+        let feedback_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
             "SELECT analysis_feedback FROM prompts WHERE user_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 100",
         )
         .bind(user_id)
@@ -477,15 +486,15 @@ impl Database {
             .collect();
 
         // Daily trend
-        let trend_rows = sqlx::query(
+        let trend_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
             "SELECT
-                DATE(created_at) as day,
+                SUBSTR(created_at, 1, 10) as day,
                 COUNT(*) as prompts,
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as tokens_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
             WHERE user_id = ? AND created_at >= ?
-            GROUP BY DATE(created_at)
+            GROUP BY SUBSTR(created_at, 1, 10)
             ORDER BY day ASC",
         )
         .bind(user_id)
@@ -495,7 +504,7 @@ impl Database {
 
         let daily_trend: Vec<DailyTrend> = trend_rows
             .into_iter()
-            .map(|r| DailyTrend {
+            .map(|r: sqlx::any::AnyRow| DailyTrend {
                 date: r.get("day"),
                 prompts: r.get("prompts"),
                 tokens_saved: r.get("tokens_saved"),
@@ -534,34 +543,46 @@ impl Database {
     }
 
     pub async fn get_learning_insights(&self, user_id: Option<&str>) -> Result<LearningInsights> {
-        let (total_query, pos_query, neg_query) = if let Some(uid) = user_id {
-            (
-                format!("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE p.user_id = '{}'", uid.replace('\'', "''")),
-                format!("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'positive' AND p.user_id = '{}'", uid.replace('\'', "''")),
-                format!("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'negative' AND p.user_id = '{}'", uid.replace('\'', "''")),
-            )
+        let total: i64 = if let Some(uid) = user_id {
+            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE p.user_id = ?")
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?;
+            r.get("cnt")
         } else {
-            (
-                "SELECT COUNT(*) as cnt FROM learning_signals".to_string(),
-                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'positive'"
-                    .to_string(),
-                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'negative'"
-                    .to_string(),
-            )
+            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals")
+                .fetch_one(&self.pool)
+                .await?;
+            r.get("cnt")
         };
-
-        let total: i64 = sqlx::query(&total_query)
+        let positive: i64 = if let Some(uid) = user_id {
+            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'positive' AND p.user_id = ?")
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?;
+            r.get("cnt")
+        } else {
+            let r: sqlx::any::AnyRow = sqlx::query(
+                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'positive'",
+            )
             .fetch_one(&self.pool)
-            .await?
-            .get("cnt");
-        let positive: i64 = sqlx::query(&pos_query)
+            .await?;
+            r.get("cnt")
+        };
+        let negative: i64 = if let Some(uid) = user_id {
+            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'negative' AND p.user_id = ?")
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?;
+            r.get("cnt")
+        } else {
+            let r: sqlx::any::AnyRow = sqlx::query(
+                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'negative'",
+            )
             .fetch_one(&self.pool)
-            .await?
-            .get("cnt");
-        let negative: i64 = sqlx::query(&neg_query)
-            .fetch_one(&self.pool)
-            .await?
-            .get("cnt");
+            .await?;
+            r.get("cnt")
+        };
 
         let positive_rate = if total > 0 {
             positive as f64 / total as f64 * 100.0
@@ -570,7 +591,7 @@ impl Database {
         };
 
         // Best domains (highest positive rate)
-        let domain_rows = sqlx::query(
+        let domain_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
             "SELECT p.domain, COUNT(*) as cnt
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
              WHERE ls.signal = 'positive'
@@ -581,7 +602,7 @@ impl Database {
 
         let best_domains: Vec<String> = domain_rows
             .iter()
-            .map(|r| {
+            .map(|r: &sqlx::any::AnyRow| {
                 let domain: String = r.get("domain");
                 let cnt: i64 = r.get("cnt");
                 format!("{} ({})", domain, cnt)
@@ -589,7 +610,7 @@ impl Database {
             .collect();
 
         // Worst issues (most common in negatively-rated prompts)
-        let issue_rows = sqlx::query(
+        let issue_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
             "SELECT p.analysis_feedback
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
              WHERE ls.signal = 'negative'
@@ -619,23 +640,23 @@ impl Database {
             .collect();
 
         // Average savings for positive vs negative
-        let avg_pos: f64 = sqlx::query(
+        let avg_pos_row: sqlx::any::AnyRow = sqlx::query(
             "SELECT COALESCE(AVG(p.savings_percentage), 0.0) as avg
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
              WHERE ls.signal = 'positive'",
         )
         .fetch_one(&self.pool)
-        .await?
-        .get("avg");
+        .await?;
+        let avg_pos: f64 = avg_pos_row.get::<f64, _>("avg");
 
-        let avg_neg: f64 = sqlx::query(
+        let avg_neg_row: sqlx::any::AnyRow = sqlx::query(
             "SELECT COALESCE(AVG(p.savings_percentage), 0.0) as avg
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
              WHERE ls.signal = 'negative'",
         )
         .fetch_one(&self.pool)
-        .await?
-        .get("avg");
+        .await?;
+        let avg_neg: f64 = avg_neg_row.get::<f64, _>("avg");
 
         // Generate recommendations
         let mut recommendations = Vec::new();
@@ -717,7 +738,7 @@ impl Database {
             q = q.bind(uid);
         }
         q = q.bind(&date_str);
-        let row = q.fetch_one(&self.pool).await?;
+        let row: sqlx::any::AnyRow = q.fetch_one(&self.pool).await?;
 
         let total_prompts: i64 = row.get("total_prompts");
         let total_original: i64 = row.get("total_original");
@@ -758,7 +779,7 @@ impl Database {
             fb_q = fb_q.bind(uid);
         }
         fb_q = fb_q.bind(&date_str);
-        let feedback_rows = fb_q.fetch_all(&self.pool).await?;
+        let feedback_rows: Vec<sqlx::any::AnyRow> = fb_q.fetch_all(&self.pool).await?;
 
         let mut category_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
@@ -796,11 +817,11 @@ impl Database {
             mq = mq.bind(uid);
         }
         mq = mq.bind(&date_str);
-        let member_rows = mq.fetch_all(&self.pool).await?;
+        let member_rows: Vec<sqlx::any::AnyRow> = mq.fetch_all(&self.pool).await?;
 
         let member_breakdown: Vec<MemberStats> = member_rows
             .into_iter()
-            .map(|r| MemberStats {
+            .map(|r: sqlx::any::AnyRow| MemberStats {
                 user_id: r.get("user_id"),
                 total_prompts: r.get("total_prompts"),
                 total_tokens_saved: r.get("total_saved"),
@@ -814,13 +835,13 @@ impl Database {
         // Daily trend
         let trend_query = format!(
             "SELECT
-                DATE(created_at) as day,
+                SUBSTR(created_at, 1, 10) as day,
                 COUNT(*) as prompts,
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as tokens_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
             WHERE {} AND created_at >= ?
-            GROUP BY DATE(created_at) ORDER BY day ASC",
+            GROUP BY SUBSTR(created_at, 1, 10) ORDER BY day ASC",
             user_filter
         );
         let mut tq = sqlx::query(&trend_query);
@@ -828,11 +849,11 @@ impl Database {
             tq = tq.bind(uid);
         }
         tq = tq.bind(&date_str);
-        let trend_rows = tq.fetch_all(&self.pool).await?;
+        let trend_rows: Vec<sqlx::any::AnyRow> = tq.fetch_all(&self.pool).await?;
 
         let daily_trend: Vec<DailyTrend> = trend_rows
             .into_iter()
-            .map(|r| DailyTrend {
+            .map(|r: sqlx::any::AnyRow| DailyTrend {
                 date: r.get("day"),
                 prompts: r.get("prompts"),
                 tokens_saved: r.get("tokens_saved"),
@@ -854,7 +875,7 @@ impl Database {
     }
 
     pub async fn get_audit_trail(&self, prompt_id: &str) -> Result<Vec<AuditLogEntry>> {
-        let rows =
+        let rows: Vec<sqlx::any::AnyRow> =
             sqlx::query("SELECT * FROM audit_log WHERE prompt_id = ? ORDER BY created_at ASC")
                 .bind(prompt_id)
                 .fetch_all(&self.pool)
@@ -862,7 +883,7 @@ impl Database {
 
         let entries = rows
             .into_iter()
-            .map(|r| {
+            .map(|r: sqlx::any::AnyRow| {
                 let detail_str: String = r.get("detail");
                 AuditLogEntry {
                     id: r.get("id"),
