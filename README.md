@@ -24,7 +24,7 @@
 
 **The first MCP-native prompt optimization engine. 9 heuristic checks, domain-aware refinement,<br>cryptographic audit trails, and real cost savings — pure Rust, zero telemetry, your infrastructure.**
 
-**v0.3.0** — Now supports SQLite + Postgres, Docker deployment, and every major MCP client.<br>Still zero cloud dependencies. Still zero telemetry. Your prompts never touch our servers.
+**v0.4.0** — Now includes SovereignProxy: an HTTP reverse proxy that optimizes prompts for any model (Anthropic, OpenAI, Ollama, vLLM).<br>Set one env var, every API call flows through the engine. Still zero cloud. Still zero telemetry.
 
 <br>
 
@@ -40,17 +40,24 @@ https://github.com/user-attachments/assets/ee2438e2-5f89-4dc3-8cd2-1f784a8844ab
 
 ---
 
-## What's New in v0.3.0
+## What's New in v0.4.0
 
-> Previously local-only. Now runs everywhere — same engine, same privacy, more platforms.
+> Previously MCP-only. Now sits in front of any model API as transparent middleware.
 
-- **Dual database** — SQLite (local default) or Postgres (self-hosted/Docker). Set `DATABASE_URL` and go.
-- **Docker deployment** — `docker-compose up` gives you SovereignPrompt + Postgres in one command.
-- **Every MCP client** — Claude Code, Claude Desktop, Cursor, Windsurf, ChatGPT Desktop, VS Code, Zed, and more.
-- **Health endpoint** — `/health` on the dashboard for uptime monitoring.
-- **sqlx 0.8** — Latest database driver, resolved all actionable security advisories.
-- **CI/CD pipeline** — GitHub Actions for test, clippy, fmt, audit. Release workflow builds binaries on tag.
+- **SovereignProxy** — New `sovereign-proxy` binary: HTTP reverse proxy that intercepts `/v1/messages` (Anthropic) and `/v1/chat/completions` (OpenAI) requests, optimizes the prompt, and forwards to any upstream provider.
+- **Model-agnostic** — Works with Anthropic, OpenAI, Ollama, vLLM, Mistral, Gemma, or any OpenAI-compatible API.
+- **Zero-friction setup** — Set `ANTHROPIC_BASE_URL=http://localhost:8788` once. Every API call is automatically optimized.
+- **Response capture** — Proxy captures model responses back to the database for the full feedback loop.
+- **Streaming support** — SSE streaming pass-through for both API formats.
+- **Workspace structure** — Project is now a Cargo workspace with `sovereign-prompt` (MCP server) and `sovereign-proxy` (HTTP proxy) as separate crates sharing the same core engine.
 - **Still zero telemetry. Still zero cloud. Your prompts stay yours.**
+
+<details>
+<summary><strong>v0.3.0</strong></summary>
+
+- Dual database (SQLite + Postgres), Docker deployment, every MCP client supported, health endpoint, sqlx 0.8, CI/CD pipeline.
+
+</details>
 
 See the full [CHANGELOG](./CHANGELOG.md) for details.
 
@@ -86,9 +93,11 @@ If it speaks MCP, it works with SovereignPrompt. No adapters. No plugins. Just c
 
 ```bash
 git clone https://github.com/BMC-INC/Sovereign-Prompt.git
-cd Sovereign-Prompt/sovereign-prompt
+cd Sovereign-Prompt
 cargo build --release
 ```
+
+This builds both binaries: `sovereign-prompt` (MCP server) and `sovereign-proxy` (HTTP proxy).
 
 Then tell your MCP client where to find the binary:
 
@@ -303,6 +312,76 @@ No config file? Every default is sane. The engine runs at full strength out of t
 
 ---
 
+## SovereignProxy — Model-Agnostic Middleware
+
+**New in v0.4.0.** SovereignPrompt now ships a second binary: `sovereign-proxy`, an HTTP reverse proxy that sits in front of **any** LLM API and runs every prompt through the optimization engine automatically.
+
+```
+Your App / Claude Code / Any Client
+        ↓
+  SovereignProxy (localhost:8788)
+    → Parse request body
+    → Extract last user message
+    → Run 9 heuristic checks + refinement + domain template
+    → Rewrite message in request body
+    → Forward to upstream provider
+    → Capture response for feedback loop
+        ↓
+  Anthropic / OpenAI / Ollama / vLLM / Any Provider
+```
+
+**Supports both API formats:**
+- `/v1/messages` — Anthropic API
+- `/v1/chat/completions` — OpenAI-compatible API (OpenAI, Ollama, vLLM, Gemma, Mistral, etc.)
+
+### Quick Start
+
+```bash
+# Build
+cd Sovereign-Prompt
+cargo build --release -p sovereign-proxy
+
+# Run
+./target/release/sovereign-proxy
+```
+
+### One-Time Setup
+
+Add to your `~/.zshrc` (or `~/.bashrc`):
+
+```bash
+# Route all API calls through SovereignProxy
+export ANTHROPIC_BASE_URL="http://localhost:8788"
+# For OpenAI-compatible clients:
+# export OPENAI_BASE_URL="http://localhost:8788"
+```
+
+Then `source ~/.zshrc`. Every API call from Claude Code, custom clients, or any tool that respects these env vars will flow through SovereignProxy automatically.
+
+### Proxy Environment Variables
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `SOVEREIGN_PROXY_ADDR` | `127.0.0.1:8788` | Proxy listen address |
+| `SOVEREIGN_UPSTREAM_ANTHROPIC` | `https://api.anthropic.com` | Upstream Anthropic API URL |
+| `SOVEREIGN_UPSTREAM_OPENAI` | `https://api.openai.com` | Upstream OpenAI API URL |
+
+The proxy shares the same database (`DATABASE_URL`), config (`SOVEREIGN_CONFIG_PATH`), and HMAC key (`SOVEREIGN_HMAC_KEY`) as the MCP server. Both binaries can run simultaneously — the MCP server on stdio/SSE, the proxy on HTTP.
+
+### How It Differs From the MCP Server
+
+| | MCP Server (`sovereign-prompt`) | HTTP Proxy (`sovereign-proxy`) |
+|:--|:--|:--|
+| **Entry point** | MCP tool call (`optimize_prompt`) | HTTP request interception |
+| **Activation** | Explicit — you or the AI calls the tool | Automatic — every API call flows through |
+| **Works with** | Any MCP client | Any HTTP client, any model provider |
+| **Transport** | stdio / SSE | HTTP reverse proxy |
+| **Use case** | Conversational optimization with feedback | Zero-friction middleware for all API traffic |
+
+Both use the same optimization engine, the same database, the same audit trail. Two doors into the same room.
+
+---
+
 ## Live Dashboard
 
 A built-in Axum dashboard streams analytics over WebSockets at `http://127.0.0.1:8787`. Total prompts, tokens saved, average savings, governance status — all updating in real time.
@@ -318,6 +397,7 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 | | |
 |:--|:--|
 | **Language** | Rust (2021 edition), `#![deny(unsafe_code)]` |
+| **Architecture** | Cargo workspace — `sovereign-prompt` (MCP server) + `sovereign-proxy` (HTTP proxy) |
 | **Protocol** | MCP via `rmcp` — stdio (default) or SSE transport |
 | **Tokenization** | `tiktoken-rs` — cl100k_base, o200k_base, p50k_base, r50k_base |
 | **Persistence** | SQLite or Postgres via `sqlx` Any driver — set `DATABASE_URL` for Postgres |
@@ -341,6 +421,9 @@ SOVEREIGN_DASHBOARD_ONLY=1 ./target/release/sovereign-prompt
 | `SOVEREIGN_DASHBOARD_ADDR` | `127.0.0.1:8787` | Dashboard bind address |
 | `SOVEREIGN_DASHBOARD_ONLY` | `false` | Dashboard-only mode |
 | `SOVEREIGN_HMAC_KEY` | _(dev default)_ | HMAC signing key (**change in production**) |
+| `SOVEREIGN_PROXY_ADDR` | `127.0.0.1:8788` | Proxy listen address |
+| `SOVEREIGN_UPSTREAM_ANTHROPIC` | `https://api.anthropic.com` | Upstream Anthropic API URL for proxy |
+| `SOVEREIGN_UPSTREAM_OPENAI` | `https://api.openai.com` | Upstream OpenAI API URL for proxy |
 | `RUST_LOG` | _(none)_ | Log level: `info`, `debug`, `trace` |
 
 ---
