@@ -189,7 +189,9 @@ async fn handle_proxy(
         let mut builder =
             Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK));
         for (key, value) in resp_headers.iter() {
-            builder = builder.header(key, value);
+            if should_forward_response_header(key.as_str()) {
+                builder = builder.header(key, value);
+            }
         }
         builder
             .body(response_body)
@@ -222,7 +224,9 @@ async fn handle_proxy(
         let mut builder =
             Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK));
         for (key, value) in resp_headers.iter() {
-            builder = builder.header(key, value);
+            if should_forward_response_header(key.as_str()) {
+                builder = builder.header(key, value);
+            }
         }
         builder
             .body(Body::from(resp_body))
@@ -253,7 +257,9 @@ async fn forward_passthrough(
         let mut builder =
             Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK));
         for (key, value) in resp_headers.iter() {
-            builder = builder.header(key, value);
+            if should_forward_response_header(key.as_str()) {
+                builder = builder.header(key, value);
+            }
         }
         builder
             .body(Body::from_stream(stream))
@@ -268,12 +274,22 @@ async fn forward_passthrough(
         let mut builder =
             Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK));
         for (key, value) in resp_headers.iter() {
-            builder = builder.header(key, value);
+            if should_forward_response_header(key.as_str()) {
+                builder = builder.header(key, value);
+            }
         }
         builder
             .body(Body::from(resp_body))
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
     }
+}
+
+/// Filter out hop-by-hop headers that shouldn't be forwarded in the response.
+fn should_forward_response_header(name: &str) -> bool {
+    !matches!(
+        name,
+        "transfer-encoding" | "content-length" | "connection" | "keep-alive"
+    )
 }
 
 /// Extract assistant response text from a non-streaming response body.
