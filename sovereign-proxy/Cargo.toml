@@ -1,0 +1,29 @@
+[package]
+name = "sovereign-proxy"
+version = "0.1.0"
+edition = "2021"
+authors = ["ExecLayer Inc."]
+description = "HTTP reverse proxy that runs prompts through SovereignPrompt before forwarding to any LLM API"
+license = "MIT"
+
+[[bin]]
+name = "sovereign-proxy"
+path = "src/main.rs"
+
+[dependencies]
+sovereign-prompt = { path = "../sovereign-prompt" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+reqwest = { version = "0.12", features = ["stream", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
