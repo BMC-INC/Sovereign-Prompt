@@ -41,7 +41,7 @@ pub async fn run(state: ProxyState) -> Result<()> {
     let addr: SocketAddr = std::env::var("SOVEREIGN_PROXY_ADDR")
         .ok()
         .and_then(|a| a.parse().ok())
-        .unwrap_or_else(|| "127.0.0.1:8788".parse().unwrap());
+        .unwrap_or_else(|| "0.0.0.0:8788".parse().unwrap());
 
     tracing::info!("SovereignProxy listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
