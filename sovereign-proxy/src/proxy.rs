@@ -66,7 +66,14 @@ async fn handle_openai(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, (StatusCode, String)> {
-    handle_proxy(state, headers, body, "/v1/chat/completions", ApiFormat::OpenAI).await
+    handle_proxy(
+        state,
+        headers,
+        body,
+        "/v1/chat/completions",
+        ApiFormat::OpenAI,
+    )
+    .await
 }
 
 async fn handle_proxy(
@@ -180,9 +187,7 @@ async fn handle_proxy(
             .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
         let stream = resp.bytes_stream().map(|result| {
-            result.map_err(|e| {
-                axum::Error::new(std::io::Error::other(e.to_string()))
-            })
+            result.map_err(|e| axum::Error::new(std::io::Error::other(e.to_string())))
         });
         let response_body = Body::from_stream(stream);
 
@@ -212,12 +217,12 @@ async fn handle_proxy(
                     .tokenizer
                     .count_for_model(token_model, &text)
                     .unwrap_or_default();
-                let _ = state.db.update_output(&prompt_id, &text, output_tokens).await;
-                let output_hash = CryptoEngine::compute_output_hash(&text);
                 let _ = state
                     .db
-                    .update_output_hash(&prompt_id, &output_hash)
+                    .update_output(&prompt_id, &text, output_tokens)
                     .await;
+                let output_hash = CryptoEngine::compute_output_hash(&text);
+                let _ = state.db.update_output_hash(&prompt_id, &output_hash).await;
             }
         }
 
@@ -250,9 +255,7 @@ async fn forward_passthrough(
             .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
         let stream = resp.bytes_stream().map(|result| {
-            result.map_err(|e| {
-                axum::Error::new(std::io::Error::other(e.to_string()))
-            })
+            result.map_err(|e| axum::Error::new(std::io::Error::other(e.to_string())))
         });
         let mut builder =
             Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK));

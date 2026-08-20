@@ -238,7 +238,7 @@ impl Database {
         }
 
         let mut top: Vec<(String, usize)> = category_counts.into_iter().collect();
-        top.sort_by(|a, b| b.1.cmp(&a.1));
+        top.sort_by_key(|x| std::cmp::Reverse(x.1));
         let top_issues: Vec<String> = top
             .into_iter()
             .take(5)
@@ -454,8 +454,8 @@ impl Database {
         .await?;
         let approved_prompts: i64 = approved_row.get("cnt");
 
-        let attempts_to_usable = (accepted_outputs > 0)
-            .then(|| total_prompts as f64 / accepted_outputs as f64);
+        let attempts_to_usable =
+            (accepted_outputs > 0).then(|| total_prompts as f64 / accepted_outputs as f64);
         let governance_clean_rate =
             (total_prompts > 0).then(|| approved_prompts as f64 / total_prompts as f64);
 
@@ -507,7 +507,7 @@ impl Database {
             }
         }
         let mut top: Vec<(String, usize)> = category_counts.into_iter().collect();
-        top.sort_by(|a, b| b.1.cmp(&a.1));
+        top.sort_by_key(|x| std::cmp::Reverse(x.1));
         let top_issues: Vec<String> = top
             .into_iter()
             .take(5)
@@ -663,7 +663,7 @@ impl Database {
             }
         }
         let mut worst: Vec<(String, usize)> = issue_counts.into_iter().collect();
-        worst.sort_by(|a, b| b.1.cmp(&a.1));
+        worst.sort_by_key(|x| std::cmp::Reverse(x.1));
         let worst_issues: Vec<String> = worst
             .into_iter()
             .take(5)
@@ -847,7 +847,7 @@ impl Database {
             }
         }
         let mut top: Vec<(String, usize)> = category_counts.into_iter().collect();
-        top.sort_by(|a, b| b.1.cmp(&a.1));
+        top.sort_by_key(|x| std::cmp::Reverse(x.1));
         let top_issues: Vec<String> = top
             .into_iter()
             .take(5)

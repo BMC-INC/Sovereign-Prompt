@@ -11,9 +11,10 @@ pub enum ApiFormat {
 /// Extract the text content of the last user message from a request body.
 pub fn extract_last_user_message(body: &Value, _format: ApiFormat) -> Option<String> {
     let messages = body.get("messages")?.as_array()?;
-    let last_user = messages.iter().rev().find(|m| {
-        m.get("role").and_then(|r| r.as_str()) == Some("user")
-    })?;
+    let last_user = messages
+        .iter()
+        .rev()
+        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))?;
 
     let content = last_user.get("content")?;
 
@@ -22,14 +23,21 @@ pub fn extract_last_user_message(body: &Value, _format: ApiFormat) -> Option<Str
         Value::Array(blocks) => {
             // Both Anthropic and OpenAI support content block arrays.
             // Find all text blocks and join them.
-            let text_parts: Vec<&str> = blocks.iter().filter_map(|block| {
-                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                    block.get("text").and_then(|t| t.as_str())
-                } else {
-                    None
-                }
-            }).collect();
-            if text_parts.is_empty() { None } else { Some(text_parts.join(" ")) }
+            let text_parts: Vec<&str> = blocks
+                .iter()
+                .filter_map(|block| {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        block.get("text").and_then(|t| t.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if text_parts.is_empty() {
+                None
+            } else {
+                Some(text_parts.join(" "))
+            }
         }
         _ => None,
     }
@@ -43,9 +51,11 @@ pub fn replace_last_user_message(body: &mut Value, optimized: &str, _format: Api
         None => return,
     };
 
-    if let Some(last_user) = messages.iter_mut().rev().find(|m| {
-        m.get("role").and_then(|r| r.as_str()) == Some("user")
-    }) {
+    if let Some(last_user) = messages
+        .iter_mut()
+        .rev()
+        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+    {
         let content = match last_user.get("content") {
             Some(c) => c.clone(),
             None => return,
@@ -57,9 +67,11 @@ pub fn replace_last_user_message(body: &mut Value, optimized: &str, _format: Api
             }
             Value::Array(blocks) => {
                 let mut new_blocks = blocks.clone();
-                if let Some(last_text) = new_blocks.iter_mut().rev().find(|b| {
-                    b.get("type").and_then(|t| t.as_str()) == Some("text")
-                }) {
+                if let Some(last_text) = new_blocks
+                    .iter_mut()
+                    .rev()
+                    .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+                {
                     last_text["text"] = Value::String(optimized.to_string());
                 }
                 last_user["content"] = Value::Array(new_blocks);
@@ -85,7 +97,10 @@ mod tests {
             ]
         });
         let extracted = extract_last_user_message(&body, ApiFormat::Anthropic);
-        assert_eq!(extracted, Some("Please help me with something maybe".to_string()));
+        assert_eq!(
+            extracted,
+            Some("Please help me with something maybe".to_string())
+        );
     }
 
     #[test]
@@ -128,7 +143,11 @@ mod tests {
                 ]
             }]
         });
-        replace_last_user_message(&mut body, "Describe this image concisely.", ApiFormat::Anthropic);
+        replace_last_user_message(
+            &mut body,
+            "Describe this image concisely.",
+            ApiFormat::Anthropic,
+        );
         let blocks = body["messages"][0]["content"].as_array().unwrap();
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0]["type"], "image");

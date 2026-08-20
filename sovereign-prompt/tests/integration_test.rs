@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use sovereign_prompt::analyzer::PromptAnalyzer;
 use sovereign_prompt::config::CustomCheck;
 use sovereign_prompt::config::{HeuristicsConfig, InjectionMode, SovereignConfig};
