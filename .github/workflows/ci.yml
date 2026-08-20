@@ -13,23 +13,17 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sovereign-prompt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: sovereign-prompt
+          workspaces: .
       - run: cargo test
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sovereign-prompt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -37,15 +31,12 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: sovereign-prompt
+          workspaces: .
       - run: cargo clippy -- -D warnings
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sovereign-prompt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -56,9 +47,6 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sovereign-prompt
     steps:
       - uses: actions/checkout@v4
       - name: Install cargo-audit
