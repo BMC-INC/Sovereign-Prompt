@@ -73,7 +73,7 @@ function Hero() {
             Get Started
           </a>
           <a
-            href="https://github.com/ExecLayer/sovereign-prompt"
+            href="https://github.com/BMC-INC/Sovereign-Prompt"
             target="_blank"
             rel="noopener noreferrer"
             className="sc-btn-ghost"
@@ -280,8 +280,8 @@ function Install() {
           </h3>
           <div className="sc-code-block">
             <pre className="font-mono text-sm text-sc-text-dim">
-              <code>{`git clone https://github.com/ExecLayer/sovereign-prompt.git
-cd sovereign-prompt
+              <code>{`git clone https://github.com/BMC-INC/Sovereign-Prompt.git
+cd Sovereign-Prompt
 cargo build --release`}</code>
             </pre>
           </div>
@@ -386,7 +386,7 @@ function Footer() {
             SovereignClaw
           </a>
           <a
-            href="https://github.com/ExecLayer/sovereign-prompt"
+            href="https://github.com/BMC-INC/Sovereign-Prompt"
             target="_blank"
             rel="noopener noreferrer"
             className="transition-colors hover:text-sc-red"
