@@ -4,6 +4,37 @@ All notable changes to SovereignPrompt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Task-level metrics in `savings_report` and `team_report`: `attempts_to_usable` (prompts per positively-rated output), `cost_per_accepted_output` (per model, inside `cost_estimates`), and `governance_clean_rate` (fraction of prompts with approved governance status)
+- README section "How Savings Actually Work" explaining per-prompt token delta vs task-level savings
+
+### Changed
+
+- **Breaking (report JSON):** renamed the per-prompt figure in `savings_report` and `team_report` output to reflect what it measures — `total_tokens_saved` → `total_token_delta`, `average_savings_percentage` → `average_token_delta_percentage`, and in `daily_trend`/`member_breakdown`, `tokens_saved` → `token_delta`, `savings_percentage` → `token_delta_percentage`. Per-prompt records, `get_stats`, and the dashboard payload are unchanged.
+
+### Fixed
+
+- Landing page GitHub links pointed at the wrong org; clone snippet used the wrong directory name
+
+### Removed
+
+- Stray generation transcript (`sovereignprompt.txt`) and internal plan docs (`docs/superpowers/`)
+
+## [0.4.0] - 2026-04-05
+
+### Added
+
+- SovereignProxy (`sovereign-proxy` crate): model-agnostic HTTP middleware that optimizes prompts in-flight for Anthropic and OpenAI API traffic, with streaming support and hop-by-hop header filtering
+- Cargo workspace root for the multi-crate setup
+
+### Fixed
+
+- Tracing logs redirected to stderr so MCP stdio transport isn't polluted
+- Proxy binds to 0.0.0.0 so localhost resolves on IPv6 systems
+
 ## [0.3.0] - 2026-03-22
 
 ### Added
