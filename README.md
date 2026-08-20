@@ -28,7 +28,7 @@
 
 <br>
 
-https://github.com/user-attachments/assets/ee2438e2-5f89-4dc3-8cd2-1f784a8844ab
+<img src="sovereign-prompt/assets/how-it-works.gif" alt="SovereignPrompt optimizing a prompt end to end" width="720" />
 
 <br>
 
