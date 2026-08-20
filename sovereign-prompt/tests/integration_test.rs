@@ -706,7 +706,7 @@ async fn db_savings_report_query() {
         .await
         .unwrap();
     assert_eq!(report.total_prompts, 5);
-    assert_eq!(report.total_tokens_saved, 200); // 5 * (100 - 60)
+    assert_eq!(report.total_token_delta, 200); // 5 * (100 - 60)
     assert!(!report.cost_estimates.is_empty());
     assert!(!report.daily_trend.is_empty());
 }
@@ -754,7 +754,7 @@ async fn db_savings_report_empty_state() {
         .await
         .unwrap();
     assert_eq!(report.total_prompts, 0);
-    assert_eq!(report.total_tokens_saved, 0);
+    assert_eq!(report.total_token_delta, 0);
     assert!(report.daily_trend.is_empty());
     assert!(report.cost_estimates.len() == 4); // 4 default models
 }
@@ -956,7 +956,7 @@ async fn db_team_report_aggregates_users() {
     let user_ids = vec!["alice".to_string(), "bob".to_string()];
     let report = db.get_team_report(&user_ids, "30d", None).await.unwrap();
     assert_eq!(report.total_prompts, 6); // 3 + 3
-    assert_eq!(report.total_tokens_saved, 240); // 6 * (100 - 60)
+    assert_eq!(report.total_token_delta, 240); // 6 * (100 - 60)
     assert_eq!(report.member_breakdown.len(), 2);
     assert!(!report.cost_estimates.is_empty());
 }

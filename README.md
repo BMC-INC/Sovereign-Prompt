@@ -164,6 +164,32 @@ This isn't a wrapper. It's an optimization engine that speaks [MCP](https://mode
 
 No LLM in the loop. No API calls. No cloud. No latency. Pure deterministic Rust.
 
+## How Savings Actually Work
+
+A well-structured prompt is often longer than the one you typed. That is expected. If you send a short, vague prompt, SovereignPrompt adds the constraints, format signal, and domain template the model needs to get it right the first time. The refined prompt costs more tokens than the original. The report will show that as a negative number on that single call.
+
+That single number is not the savings. The savings come from the passes you no longer make.
+
+Unstructured prompting usually takes two to four attempts to reach a usable output: the first prompt is vague, the output is off, you re-prompt with more detail, the format is wrong, you re-prompt again. Every one of those round trips costs input tokens, output tokens, and your time. SovereignPrompt front-loads the structure so the first call is the usable one.
+
+The math on a typical task (illustrative numbers, not measured benchmarks):
+
+| | Unstructured | SovereignPrompt |
+|---|---|---|
+| Prompt tokens per attempt | 120 | 220 |
+| Attempts to usable output | 3 | 1 |
+| Total prompt tokens | 360 | 220 |
+| Output tokens generated | 3 responses | 1 response |
+| Governance check | none | every call |
+
+In this illustration the refined prompt is 83% larger and the task costs 39% less, before counting the wasted output tokens from the two discarded responses. Your ratio will vary; use `capture_output` and `savings_report` to measure it on your own traffic.
+
+Where a prompt is already bloated with filler, SovereignPrompt strips it and the savings show up on the single call. Where a prompt is too thin, it adds structure and the savings show up across the task. Both are real. Only the first one appears in the per-prompt savings percentage today.
+
+Governance runs on every call either way. PII patterns, credentials, and injection attempts are caught before the prompt leaves your machine, and every optimization carries a content hash and a signable audit record. You get that on the first pass too, not after something leaks.
+
+A metric that captures task-level savings (passes to usable output, cost per accepted result) is on the roadmap. Until then, read a negative per-prompt number on a short input as "structure added," not "money lost."
+
 | Feature | SovereignPrompt | Other MCP Prompt Tools |
 |:--------|:---------------:|:----------------------:|
 | Local or self-hosted, zero LLM calls | **Yes** | Usually sends to LLM |

@@ -432,6 +432,33 @@ impl Database {
         let total_saved: i64 = row.get("total_saved");
         let avg_savings: f64 = row.get("avg_savings");
 
+        // Task-level metrics: accepted outputs = prompts with a positive learning signal
+        let accepted_row: sqlx::any::AnyRow = sqlx::query(
+            "SELECT COUNT(DISTINCT ls.prompt_id) as cnt
+             FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
+             WHERE ls.signal = 'positive' AND p.user_id = ? AND p.created_at >= ?",
+        )
+        .bind(user_id)
+        .bind(&date_str)
+        .fetch_one(&self.pool)
+        .await?;
+        let accepted_outputs: i64 = accepted_row.get("cnt");
+
+        let approved_row: sqlx::any::AnyRow = sqlx::query(
+            "SELECT COUNT(*) as cnt FROM prompts
+             WHERE user_id = ? AND created_at >= ? AND approval_status = 'approved'",
+        )
+        .bind(user_id)
+        .bind(&date_str)
+        .fetch_one(&self.pool)
+        .await?;
+        let approved_prompts: i64 = approved_row.get("cnt");
+
+        let attempts_to_usable = (accepted_outputs > 0)
+            .then(|| total_prompts as f64 / accepted_outputs as f64);
+        let governance_clean_rate =
+            (total_prompts > 0).then(|| approved_prompts as f64 / total_prompts as f64);
+
         // Default cost rates per 1M input tokens
         let default_rates: Vec<(String, f64)> = vec![
             ("Claude Sonnet 4".to_string(), 3.00),
@@ -452,6 +479,8 @@ impl Database {
                     original_cost,
                     refined_cost,
                     savings: original_cost - refined_cost,
+                    cost_per_accepted_output: (accepted_outputs > 0)
+                        .then(|| refined_cost / accepted_outputs as f64),
                 }
             })
             .collect();
@@ -507,8 +536,8 @@ impl Database {
             .map(|r: sqlx::any::AnyRow| DailyTrend {
                 date: r.get("day"),
                 prompts: r.get("prompts"),
-                tokens_saved: r.get("tokens_saved"),
-                savings_percentage: r.get("avg_savings"),
+                token_delta: r.get("tokens_saved"),
+                token_delta_percentage: r.get("avg_savings"),
             })
             .collect();
 
@@ -518,8 +547,10 @@ impl Database {
             total_prompts,
             total_original_tokens: total_original,
             total_refined_tokens: total_refined,
-            total_tokens_saved: total_saved,
-            average_savings_percentage: avg_savings,
+            total_token_delta: total_saved,
+            average_token_delta_percentage: avg_savings,
+            attempts_to_usable,
+            governance_clean_rate,
             cost_estimates,
             top_issues,
             daily_trend,
@@ -746,6 +777,26 @@ impl Database {
         let total_saved: i64 = row.get("total_saved");
         let avg_savings: f64 = row.get("avg_savings");
 
+        // Accepted outputs across the team (positive learning signals)
+        let accepted_user_filter = if user_ids.is_empty() {
+            "1=1".to_string()
+        } else {
+            format!("p.user_id IN ({})", placeholders.join(","))
+        };
+        let accepted_query = format!(
+            "SELECT COUNT(DISTINCT ls.prompt_id) as cnt
+             FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
+             WHERE ls.signal = 'positive' AND {} AND p.created_at >= ?",
+            accepted_user_filter
+        );
+        let mut aq = sqlx::query(&accepted_query);
+        for uid in user_ids {
+            aq = aq.bind(uid);
+        }
+        aq = aq.bind(&date_str);
+        let accepted_row: sqlx::any::AnyRow = aq.fetch_one(&self.pool).await?;
+        let accepted_outputs: i64 = accepted_row.get("cnt");
+
         // Cost estimates
         let default_rates: Vec<(String, f64)> = vec![
             ("Claude Sonnet 4".to_string(), 3.00),
@@ -765,6 +816,8 @@ impl Database {
                     original_cost,
                     refined_cost,
                     savings: original_cost - refined_cost,
+                    cost_per_accepted_output: (accepted_outputs > 0)
+                        .then(|| refined_cost / accepted_outputs as f64),
                 }
             })
             .collect();
@@ -824,8 +877,8 @@ impl Database {
             .map(|r: sqlx::any::AnyRow| MemberStats {
                 user_id: r.get("user_id"),
                 total_prompts: r.get("total_prompts"),
-                total_tokens_saved: r.get("total_saved"),
-                average_savings_percentage: r.get("avg_savings"),
+                total_token_delta: r.get("total_saved"),
+                average_token_delta_percentage: r.get("avg_savings"),
             })
             .collect();
 
@@ -856,8 +909,8 @@ impl Database {
             .map(|r: sqlx::any::AnyRow| DailyTrend {
                 date: r.get("day"),
                 prompts: r.get("prompts"),
-                tokens_saved: r.get("tokens_saved"),
-                savings_percentage: r.get("avg_savings"),
+                token_delta: r.get("tokens_saved"),
+                token_delta_percentage: r.get("avg_savings"),
             })
             .collect();
 
@@ -865,8 +918,10 @@ impl Database {
             team_members,
             period: period.to_string(),
             total_prompts,
-            total_tokens_saved: total_saved,
-            average_savings_percentage: avg_savings,
+            total_token_delta: total_saved,
+            average_token_delta_percentage: avg_savings,
+            attempts_to_usable: (accepted_outputs > 0)
+                .then(|| total_prompts as f64 / accepted_outputs as f64),
             cost_estimates,
             top_issues,
             member_breakdown,

@@ -183,8 +183,16 @@ pub struct SavingsReport {
     pub total_prompts: i64,
     pub total_original_tokens: i64,
     pub total_refined_tokens: i64,
-    pub total_tokens_saved: i64,
-    pub average_savings_percentage: f64,
+    /// Per-prompt token difference (original - refined). Negative means
+    /// structure was added; task-level savings are captured by
+    /// `attempts_to_usable` and `cost_per_accepted_output` instead.
+    pub total_token_delta: i64,
+    pub average_token_delta_percentage: f64,
+    /// Average prompts per positively-rated output (None until at least one
+    /// prompt has a positive learning signal in the period).
+    pub attempts_to_usable: Option<f64>,
+    /// Fraction of prompts whose governance status was "approved".
+    pub governance_clean_rate: Option<f64>,
     pub cost_estimates: Vec<CostEstimate>,
     pub top_issues: Vec<String>,
     pub daily_trend: Vec<DailyTrend>,
@@ -197,14 +205,16 @@ pub struct CostEstimate {
     pub original_cost: f64,
     pub refined_cost: f64,
     pub savings: f64,
+    /// Refined-prompt cost divided by positively-rated outputs in the period.
+    pub cost_per_accepted_output: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailyTrend {
     pub date: String,
     pub prompts: i64,
-    pub tokens_saved: i64,
-    pub savings_percentage: f64,
+    pub token_delta: i64,
+    pub token_delta_percentage: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,8 +245,9 @@ pub struct TeamReport {
     pub team_members: Vec<String>,
     pub period: String,
     pub total_prompts: i64,
-    pub total_tokens_saved: i64,
-    pub average_savings_percentage: f64,
+    pub total_token_delta: i64,
+    pub average_token_delta_percentage: f64,
+    pub attempts_to_usable: Option<f64>,
     pub cost_estimates: Vec<CostEstimate>,
     pub top_issues: Vec<String>,
     pub member_breakdown: Vec<MemberStats>,
@@ -247,6 +258,6 @@ pub struct TeamReport {
 pub struct MemberStats {
     pub user_id: String,
     pub total_prompts: i64,
-    pub total_tokens_saved: i64,
-    pub average_savings_percentage: f64,
+    pub total_token_delta: i64,
+    pub average_token_delta_percentage: f64,
 }
