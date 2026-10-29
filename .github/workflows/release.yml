@@ -25,6 +25,9 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -35,7 +38,7 @@ jobs:
       - name: Verify versions and tag
         shell: bash
         run: |
-          python3 - <<'PYTHON'
+          python - <<'PYTHON'
           import os, tomllib
           versions = {tomllib.load(open(path, 'rb'))['package']['version'] for path in ['sovereign-prompt/Cargo.toml', 'sovereign-proxy/Cargo.toml']}
           assert len(versions) == 1
@@ -45,12 +48,14 @@ jobs:
         run: cargo build --workspace --locked --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
       - name: Package binaries and documentation
         shell: bash
         env:
           RELEASE_TARGET: ${{ matrix.target }}
         run: |
-          python3 - <<'PYTHON'
+          python - <<'PYTHON'
           import os, pathlib, tarfile, zipfile
           target = os.environ['RELEASE_TARGET']
           windows = 'windows' in target
