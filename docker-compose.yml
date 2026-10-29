@@ -1,9 +1,11 @@
 services:
   sovereign-prompt:
-    build: ./sovereign-prompt
+    build:
+      context: .
+      dockerfile: sovereign-prompt/Dockerfile
     ports:
-      - "8790:8790"
-      - "8787:8787"
+      - "127.0.0.1:8790:8790"
+      - "127.0.0.1:8787:8787"
     environment:
       - DATABASE_URL=postgres://sovereign:sovereign@postgres:5432/sovereign_prompt
       - SOVEREIGN_MCP_TRANSPORT=sse
