@@ -6,7 +6,9 @@ This crate provides the MCP server and the shared prompt-analysis engine. Start 
 
 | Module | Responsibility |
 | --- | --- |
-| `server.rs` | Fifteen MCP tools, argument handling, configuration, and transport startup |
+| `server.rs` | Fifteen MCP tools, argument handling, identity-scoped data access, and stdio startup |
+| `http_mcp.rs` | Stateless Streamable HTTP and bounded legacy SSE compatibility |
+| `auth.rs` | Shared HTTP credentials, principal binding, Host/Origin validation, and body limits |
 | `analyzer.rs` | Configurable prompt heuristics and explanations |
 | `optimizer.rs` | Text refinement, injection-pattern stripping, and alternative variants |
 | `templates.rs` | Domain-specific structure and constraints |
@@ -32,7 +34,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Integration tests are in [`tests/integration_test.rs`](tests/integration_test.rs). The proxy has separate message-rewriting and rejection tests in its own crate.
+Integration and transport tests are in [`tests/`](tests/), including a captured pre-migration tool-schema contract and a stdio protocol compatibility and version-fallback matrix. The proxy has separate message-rewriting and rejection tests in its own crate.
 
 The Dockerfile is stored here but expects the repository root as its build context:
 

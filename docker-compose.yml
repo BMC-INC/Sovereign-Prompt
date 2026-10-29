@@ -11,7 +11,10 @@ services:
       - SOVEREIGN_MCP_TRANSPORT=sse
       - SOVEREIGN_MCP_SSE_ADDR=0.0.0.0:8790
       - SOVEREIGN_DASHBOARD_ADDR=0.0.0.0:8787
-      - SOVEREIGN_HMAC_KEY=${SOVEREIGN_HMAC_KEY:-sovereign-prompt-dev-key-change-in-production}
+      - SOVEREIGN_HMAC_KEY=${SOVEREIGN_HMAC_KEY:?Set a private SOVEREIGN_HMAC_KEY}
+      - SOVEREIGN_API_KEY=${SOVEREIGN_API_KEY:?Set a private SOVEREIGN_API_KEY of at least 32 bytes}
+      - SOVEREIGN_USER_ID=${SOVEREIGN_USER_ID:-anonymous}
+      - SOVEREIGN_ALLOWED_HOSTS=127.0.0.1:8787,localhost:8787,127.0.0.1:8790,localhost:8790
     depends_on:
       postgres:
         condition: service_healthy
