@@ -28,7 +28,11 @@ Set `SOVEREIGN_HMAC_KEY` before relying on HMAC verification. The built-in devel
 
 ## Dependencies and release limits
 
-The current workspace uses an older `rmcp` line. CI's audit step contains explicit exceptions for RUSTSEC-2023-0071 and RUSTSEC-2026-0189; a passing CI result does not mean there are no advisories. [RUSTSEC-2026-0189](https://rustsec.org/advisories/RUSTSEC-2026-0189.html) concerns HTTP transport host validation and recommends `rmcp` 1.4.0 or newer; stdio is unaffected by that advisory. Migration and HTTP exposure review remain release work.
+The current workspace uses `rmcp` 0.1.5. CI's audit step contains explicit exceptions for RUSTSEC-2023-0071 and RUSTSEC-2026-0189; a passing CI result does not mean there are no advisories. [RUSTSEC-2026-0189](https://rustsec.org/advisories/RUSTSEC-2026-0189.html) concerns HTTP transport host validation; stdio is unaffected by that advisory. GitHub also reports version-based `rmcp` advisories concerning HTTP sessions, OAuth metadata, and redirect headers, with fixes through the 2.1 line. A migration must cover the current SDK and transport behavior rather than only the first advisory's minimum version. Migration and HTTP exposure review remain release work.
+
+The lockfile retains `rsa` through SQLx's optional MySQL dependency resolution. MySQL is not an enabled backend: SQLx defaults are disabled and only SQLite, PostgreSQL, Any, Tokio, and Rustls are selected. Confirm the active feature graph with `cargo tree -e features -i sqlx` rather than treating a lockfile entry as proof that a backend is in use. The unfiltered audit also reports the unmaintained `paste` dependency and yanked lockfile entries; these findings are not suppressed here.
+
+The October 2026 dependency cleanup updates OpenSSL, Tokio, Rand, Anyhow, and Event Listener within their compatible version lines. This removes those known version findings without claiming that the workspace is free of vulnerabilities.
 
 Run the test suite, Clippy, and an unfiltered dependency audit when assessing a deployment. The core library denies unsafe Rust in its own code; that attribute does not certify the implementation or its dependencies.
 
