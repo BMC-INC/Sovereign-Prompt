@@ -1,18 +1,28 @@
+use crate::auth::{HttpSecurity, HttpService, Principal};
 use crate::db::Database;
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::response::{Html, IntoResponse};
-use axum::routing::get;
+use axum::routing::{get, post};
+use axum::Extension;
 use axum::{Json, Router};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::time::{interval, Duration};
 
 #[derive(Clone)]
 struct DashboardState {
     db: Arc<Database>,
+    security: Arc<HttpSecurity>,
+    sessions: Arc<Mutex<HashMap<String, (Principal, Instant)>>>,
+    socket_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -21,18 +31,179 @@ struct HistoryQuery {
 }
 
 pub async fn run(db: Arc<Database>, addr: SocketAddr) -> anyhow::Result<()> {
-    let state = DashboardState { db };
+    let security = Arc::new(HttpSecurity::from_env(addr, HttpService::Dashboard)?);
+    let app = router(db, security);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
 
-    let app = Router::new()
+fn router(db: Arc<Database>, security: Arc<HttpSecurity>) -> Router {
+    let state = DashboardState {
+        db,
+        security,
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+        socket_slots: Arc::new(tokio::sync::Semaphore::new(64)),
+    };
+    Router::new()
         .route("/", get(index_handler))
         .route("/health", get(health_handler))
+        .route("/api/login", post(login))
+        .route("/api/logout", post(logout))
+        .route("/api/session", get(current_session))
         .route("/api/stats/{user_id}", get(stats_handler))
         .route("/api/history/{user_id}", get(history_handler))
         .route("/ws/analytics/{user_id}", get(websocket_handler))
-        .with_state(state);
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            dashboard_guard,
+        ))
+        .with_state(state)
+}
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+async fn dashboard_guard(
+    State(state): State<DashboardState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    state.security.validate_origin_and_host(request.headers())?;
+    let public = matches!(
+        request.uri().path(),
+        "/" | "/health" | "/api/login" | "/api/logout"
+    );
+    if !public {
+        let principal = session_id(request.headers()).and_then(|id| {
+            let sessions = state.sessions.lock().ok()?;
+            sessions
+                .get(id)
+                .filter(|(_, expiry)| *expiry > Instant::now())
+                .map(|(principal, _)| principal.clone())
+        });
+        let principal = match principal {
+            Some(principal) => Some(principal),
+            None => state.security.authenticate_headers(request.headers())?,
+        };
+        if let Some(principal) = principal {
+            request.extensions_mut().insert(principal);
+        }
+    }
+    let (parts, body) = request.into_parts();
+    let body = tokio::time::timeout(
+        Duration::from_secs(15),
+        axum::body::to_bytes(body, crate::auth::MAX_REQUEST_BODY_BYTES),
+    )
+    .await
+    .map_err(|_| StatusCode::REQUEST_TIMEOUT)?
+    .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+    let mut response = next.run(Request::from_parts(parts, Body::from(body))).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
+        .headers_mut()
+        .insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    response
+        .headers_mut()
+        .insert("x-frame-options", "DENY".parse().unwrap());
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    token: String,
+}
+
+fn session_id(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("sovereign_session="))
+}
+
+async fn login(
+    State(state): State<DashboardState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<LoginRequest>,
+) -> Result<Response, StatusCode> {
+    let principal = state
+        .security
+        .authenticate_token(&body.token)
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        sessions.retain(|_, (_, expiry)| *expiry > Instant::now());
+        if let Some(previous) = session_id(&headers) {
+            sessions.remove(previous);
+        }
+        if sessions.len() >= 1024 {
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
+        sessions.insert(
+            id.clone(),
+            (
+                principal.clone(),
+                Instant::now() + Duration::from_secs(3600),
+            ),
+        );
+    }
+    let secure = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|origin| origin.starts_with("https://"));
+    let cookie = format!(
+        "sovereign_session={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600{}",
+        if secure { "; Secure" } else { "" }
+    );
+    Ok((
+        [(header::SET_COOKIE, cookie)],
+        Json(serde_json::json!({"user_id": principal.user_id})),
+    )
+        .into_response())
+}
+
+async fn current_session(principal: Option<Extension<Principal>>) -> Json<serde_json::Value> {
+    Json(
+        serde_json::json!({"user_id": principal.as_ref().map(|p| &p.0.user_id), "authenticated": principal.is_some()}),
+    )
+}
+
+async fn logout(
+    State(state): State<DashboardState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, StatusCode> {
+    if let Some(id) = session_id(&headers) {
+        state
+            .sessions
+            .lock()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .remove(id);
+    }
+    Ok((
+        [(
+            header::SET_COOKIE,
+            "sovereign_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+        )],
+        StatusCode::NO_CONTENT,
+    )
+        .into_response())
+}
+
+fn authorize_user(
+    user_id: &str,
+    principal: Option<&Principal>,
+) -> Result<(), (StatusCode, String)> {
+    if principal.is_some_and(|principal| principal.user_id != user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "User does not match authenticated identity".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -47,7 +218,9 @@ async fn health_handler() -> Json<serde_json::Value> {
 async fn stats_handler(
     Path(user_id): Path<String>,
     State(state): State<DashboardState>,
+    principal: Option<Extension<Principal>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    authorize_user(&user_id, principal.as_ref().map(|p| &p.0))?;
     let stats = state
         .db
         .get_user_stats(&user_id)
@@ -60,7 +233,9 @@ async fn history_handler(
     Path(user_id): Path<String>,
     Query(query): Query<HistoryQuery>,
     State(state): State<DashboardState>,
+    principal: Option<Extension<Principal>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    authorize_user(&user_id, principal.as_ref().map(|p| &p.0))?;
     let limit = query.limit.unwrap_or(20).clamp(1, 50);
     let history = state
         .db
@@ -74,24 +249,67 @@ async fn websocket_handler(
     ws: WebSocketUpgrade,
     Path(user_id): Path<String>,
     State(state): State<DashboardState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| analytics_socket(socket, state.db, user_id))
+    principal: Option<Extension<Principal>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, (StatusCode, String)> {
+    authorize_user(&user_id, principal.as_ref().map(|p| &p.0))?;
+    let permit = state
+        .socket_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many analytics streams".into(),
+            )
+        })?;
+    let session = session_id(&headers).map(String::from);
+    Ok(ws
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            analytics_socket(socket, state, user_id, session).await;
+        })
+        .into_response())
 }
 
-async fn analytics_socket(mut socket: WebSocket, db: Arc<Database>, user_id: String) {
+fn session_active(state: &DashboardState, session: Option<&str>) -> bool {
+    session.is_none_or(|id| {
+        state.sessions.lock().ok().is_some_and(|sessions| {
+            sessions
+                .get(id)
+                .is_some_and(|(_, expiry)| *expiry > Instant::now())
+        })
+    })
+}
+
+async fn analytics_socket(
+    mut socket: WebSocket,
+    state: DashboardState,
+    user_id: String,
+    session: Option<String>,
+) {
+    let db = &state.db;
+    let started = Instant::now();
     let mut ticker = interval(Duration::from_secs(2));
 
     loop {
         ticker.tick().await;
+        if started.elapsed() >= Duration::from_secs(1800)
+            || !session_active(&state, session.as_deref())
+        {
+            let _ = socket.send(Message::Close(None)).await;
+            break;
+        }
 
         let stats = match db.get_user_stats(&user_id).await {
             Ok(stats) => stats,
             Err(error) => {
+                tracing::error!("Dashboard database error: {}", error);
                 let _ = socket
                     .send(Message::Text(
                         serde_json::json!({
                             "type": "error",
-                            "message": error.to_string(),
+                            "message": "Unable to read analytics",
                         })
                         .to_string()
                         .into(),
@@ -104,11 +322,12 @@ async fn analytics_socket(mut socket: WebSocket, db: Arc<Database>, user_id: Str
         let history = match db.get_recent_prompts(&user_id, 5).await {
             Ok(history) => history,
             Err(error) => {
+                tracing::error!("Dashboard database error: {}", error);
                 let _ = socket
                     .send(Message::Text(
                         serde_json::json!({
                             "type": "error",
-                            "message": error.to_string(),
+                            "message": "Unable to read analytics",
                         })
                         .to_string()
                         .into(),
@@ -136,7 +355,13 @@ async fn analytics_socket(mut socket: WebSocket, db: Arc<Database>, user_id: Str
 }
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+    {
+        tracing::error!("Dashboard database error: {}", error);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Unable to read analytics".into(),
+        )
+    }
 }
 
 const DASHBOARD_HTML: &str = r#"<!doctype html>
@@ -226,7 +451,9 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       </div>
       <div class="controls">
         <input id="userId" value="anonymous" aria-label="User ID" />
+        <input id="apiKey" type="password" autocomplete="off" placeholder="API key (when enabled)" aria-label="API key" />
         <button id="connectBtn">Connect</button>
+        <button id="logoutBtn">Sign out</button>
         <span class="status" id="status">offline</span>
       </div>
     </div>
@@ -277,6 +504,10 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       historyRows: document.getElementById("historyRows"),
     };
 
+    function escapeHtml(value) {
+      const node = document.createElement("span"); node.textContent = String(value ?? ""); return node.innerHTML;
+    }
+
     function renderSnapshot(payload) {
       const stats = payload.stats || {};
       els.totalPrompts.textContent = stats.total_prompts ?? 0;
@@ -291,25 +522,37 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
 
       const issues = stats.top_issues || [];
       els.issues.innerHTML = issues.length
-        ? issues.map((item) => `<span class="issue">${item}</span>`).join("")
+        ? issues.map((item) => `<span class="issue">${escapeHtml(item)}</span>`).join("")
         : `<span class="issue">No issues yet</span>`;
 
       const rows = payload.recent_history || [];
       els.historyRows.innerHTML = rows.map((row) => `
         <tr>
-          <td><span class="pill">${row.id.slice(0, 8)}</span></td>
-          <td>${row.domain || "general"}</td>
-          <td>${row.token_model || "cl100k_base"}</td>
-          <td>${row.original_token_count}</td>
-          <td>${row.refined_token_count}</td>
+          <td><span class="pill">${escapeHtml(String(row.id).slice(0, 8))}</span></td>
+          <td>${escapeHtml(row.domain || "general")}</td>
+          <td>${escapeHtml(row.token_model || "cl100k_base")}</td>
+          <td>${Number(row.original_token_count)}</td>
+          <td>${Number(row.refined_token_count)}</td>
           <td>${Number(row.savings_percentage || 0).toFixed(1)}%</td>
-          <td>${row.content_hash ? `<span class="pill">${row.content_hash.slice(0,8)}…</span>` : '<span style="color:var(--muted)">none</span>'}</td>
+          <td>${row.content_hash ? `<span class="pill">${escapeHtml(String(row.content_hash).slice(0,8))}…</span>` : '<span style="color:var(--muted)">none</span>'}</td>
           <td>${row.signature ? '<span style="color:var(--accent-2)">&#x2713;</span>' : '<span style="color:var(--muted)">&mdash;</span>'}</td>
         </tr>
       `).join("");
     }
 
-    function connect() {
+    async function connect() {
+      const input = document.getElementById("apiKey");
+      if (input.value) {
+        const response = await fetch("/api/login", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:input.value})});
+        input.value = "";
+        if (!response.ok) { els.status.textContent = "authentication failed"; return; }
+        els.userId.value = (await response.json()).user_id;
+      }
+      const session = await fetch("/api/session");
+      if (!session.ok) { els.status.textContent = "API key required"; return; }
+      const identity = await session.json();
+      if (identity.user_id) els.userId.value = identity.user_id;
+      els.userId.disabled = identity.authenticated;
       const userId = encodeURIComponent(els.userId.value.trim() || "anonymous");
       if (socket) socket.close();
 
@@ -345,8 +588,204 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
     }
 
     document.getElementById("connectBtn").addEventListener("click", connect);
+    document.getElementById("logoutBtn").addEventListener("click", async () => {
+      if (socket) socket.close();
+      await fetch("/api/logout", {method:"POST"});
+      document.getElementById("apiKey").value = "";
+      els.historyRows.textContent = "";
+      els.issues.textContent = "";
+      for (const key of ["totalPrompts", "tokensSaved", "avgSavings", "govStatus"]) els[key].textContent = "--";
+      els.userId.disabled = false;
+      els.status.textContent = "signed out";
+    });
     connect();
   </script>
 </body>
 </html>
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    async fn app() -> (Router, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            Database::new(dir.path().join("dashboard.db").to_str().unwrap())
+                .await
+                .unwrap(),
+        );
+        db.migrate().await.unwrap();
+        let security = HttpSecurity::new(
+            "127.0.0.1:8787".parse().unwrap(),
+            HttpService::Dashboard,
+            [
+                ("alice".into(), "a".repeat(32)),
+                ("bob".into(), "b".repeat(32)),
+            ]
+            .into(),
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        (router(db, Arc::new(security)), dir)
+    }
+
+    #[tokio::test]
+    async fn rest_and_websocket_reject_untrusted_hosts_origins_and_other_users() {
+        let (app, _dir) = app().await;
+        for (path, host, origin, key, expected) in [
+            (
+                "/api/stats/alice",
+                "127.0.0.1:8787",
+                None,
+                None,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                "/api/stats/alice",
+                "evil.example",
+                None,
+                Some("a".repeat(32)),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "/api/stats/alice",
+                "127.0.0.1:8787",
+                Some("https://evil.example"),
+                Some("a".repeat(32)),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "/api/stats/bob",
+                "127.0.0.1:8787",
+                None,
+                Some("a".repeat(32)),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "/api/history/bob",
+                "127.0.0.1:8787",
+                None,
+                Some("a".repeat(32)),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "/ws/analytics/bob",
+                "127.0.0.1:8787",
+                None,
+                None,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                "/api/stats/alice",
+                "127.0.0.1:8787",
+                None,
+                Some("a".repeat(32)),
+                StatusCode::OK,
+            ),
+        ] {
+            let mut request = Request::builder().uri(path).header("host", host);
+            if let Some(origin) = origin {
+                request = request.header("origin", origin);
+            }
+            if let Some(key) = key {
+                request = request.header("authorization", format!("Bearer {key}"));
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{path}, {host}, {origin:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn login_uses_expiring_opaque_cookie_and_logout_revokes_it() {
+        let (app, _dir) = app().await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/login")
+                    .header("host", "127.0.0.1:8787")
+                    .header("origin", "https://127.0.0.1:8787")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"token": "a".repeat(32)}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = response.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(
+            value.contains("HttpOnly")
+                && value.contains("SameSite=Strict")
+                && value.contains("Secure")
+        );
+        assert!(!value.contains(&"a".repeat(32)));
+        let cookie = value.split(';').next().unwrap().to_string();
+        for (path, status) in [
+            ("/api/history/alice", StatusCode::OK),
+            ("/api/history/bob", StatusCode::FORBIDDEN),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header("host", "127.0.0.1:8787")
+                        .header("cookie", &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/logout")
+                    .header("host", "127.0.0.1:8787")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/history/alice")
+                    .header("host", "127.0.0.1:8787")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn identity_check_preserves_local_operator_access() {
+        assert!(authorize_user("legacy-user", None).is_ok());
+        assert!(authorize_user(
+            "bob",
+            Some(&Principal {
+                user_id: "alice".into()
+            })
+        )
+        .is_err());
+    }
+}

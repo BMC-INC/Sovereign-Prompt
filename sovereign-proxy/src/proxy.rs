@@ -6,11 +6,12 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Response, StatusCode};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{middleware, Extension, Json, Router};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use reqwest::header::HeaderMap;
 use sovereign_prompt::analyzer::PromptAnalyzer;
+use sovereign_prompt::auth::{self, HttpSecurity, HttpService, Principal};
 use sovereign_prompt::config::{InjectionMode, SovereignConfig};
 use sovereign_prompt::crypto::CryptoEngine;
 use sovereign_prompt::db::Database;
@@ -32,21 +33,26 @@ pub struct ProxyState {
 }
 
 pub async fn run(state: ProxyState) -> Result<()> {
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/v1/messages", post(handle_anthropic))
-        .route("/v1/chat/completions", post(handle_openai))
-        .with_state(state);
-
     let addr: SocketAddr = std::env::var("SOVEREIGN_PROXY_ADDR")
-        .ok()
-        .and_then(|a| a.parse().ok())
-        .unwrap_or_else(|| "127.0.0.1:8788".parse().unwrap());
+        .unwrap_or_else(|_| "127.0.0.1:8788".into())
+        .parse()
+        .map_err(|error| anyhow::anyhow!("Invalid SOVEREIGN_PROXY_ADDR: {error}"))?;
+    let security = Arc::new(HttpSecurity::from_env(addr, HttpService::Proxy)?);
+    let app = router(state, security);
 
     tracing::info!("SovereignProxy listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn router(state: ProxyState, security: Arc<HttpSecurity>) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/v1/messages", post(handle_anthropic))
+        .route("/v1/chat/completions", post(handle_openai))
+        .layer(middleware::from_fn_with_state(security, auth::guard))
+        .with_state(state)
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -55,19 +61,30 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn handle_anthropic(
     State(state): State<ProxyState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response<Body>, (StatusCode, String)> {
-    handle_proxy(state, headers, body, "/v1/messages", ApiFormat::Anthropic).await
-}
-
-async fn handle_openai(
-    State(state): State<ProxyState>,
+    principal: Option<Extension<Principal>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response<Body>, (StatusCode, String)> {
     handle_proxy(
         state,
+        principal.map(|p| p.0.user_id),
+        headers,
+        body,
+        "/v1/messages",
+        ApiFormat::Anthropic,
+    )
+    .await
+}
+
+async fn handle_openai(
+    State(state): State<ProxyState>,
+    principal: Option<Extension<Principal>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response<Body>, (StatusCode, String)> {
+    handle_proxy(
+        state,
+        principal.map(|p| p.0.user_id),
         headers,
         body,
         "/v1/chat/completions",
@@ -78,6 +95,7 @@ async fn handle_openai(
 
 async fn handle_proxy(
     state: ProxyState,
+    user_id: Option<String>,
     headers: HeaderMap,
     body: Bytes,
     path: &str,
@@ -153,7 +171,7 @@ async fn handle_proxy(
     // Log the optimization to database
     let feedback_json = serde_json::to_value(&feedback).unwrap_or_default();
     let mut record = PromptRecord::new_with_context(
-        "proxy".to_string(),
+        user_id.unwrap_or_else(|| "proxy".to_string()),
         domain,
         token_model.to_string(),
         original_prompt.clone(),
@@ -317,7 +335,15 @@ async fn forward_passthrough(
 fn should_forward_response_header(name: &str) -> bool {
     !matches!(
         name,
-        "transfer-encoding" | "content-length" | "connection" | "keep-alive"
+        "transfer-encoding"
+            | "content-length"
+            | "connection"
+            | "keep-alive"
+            | "set-cookie"
+            | "proxy-authenticate"
+            | "upgrade"
+            | "trailer"
+            | "te"
     )
 }
 
@@ -391,7 +417,7 @@ mod tests {
                 }))
                 .unwrap(),
             );
-            let error = handle_proxy(state, HeaderMap::new(), body, "/v1/messages", format)
+            let error = handle_proxy(state, None, HeaderMap::new(), body, "/v1/messages", format)
                 .await
                 .unwrap_err();
             assert_eq!(error.0, StatusCode::FORBIDDEN);
@@ -409,6 +435,7 @@ mod tests {
         })).unwrap());
         let error = handle_proxy(
             state,
+            None,
             HeaderMap::new(),
             body,
             "/v1/chat/completions",
@@ -430,6 +457,7 @@ mod tests {
         })).unwrap());
         let error = handle_proxy(
             state,
+            None,
             HeaderMap::new(),
             body,
             "/v1/chat/completions",
@@ -439,5 +467,160 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.0, StatusCode::FORBIDDEN);
         assert_eq!(error.1, "Prompt rejected by injection policy");
+    }
+}
+
+#[cfg(test)]
+mod acceptance_tests {
+    use super::*;
+    use axum::response::IntoResponse;
+    use std::collections::BTreeMap;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn provider_formats_streams_credentials_and_tenant_records_survive_http_guard() {
+        let (send, mut receive) = mpsc::channel::<(String, HeaderMap, serde_json::Value)>(8);
+        let upstream = Router::new().route("/{*path}", post(move |uri: axum::http::Uri, headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+            let send = send.clone();
+            async move {
+                send.send((uri.path().into(), headers, body.clone())).await.unwrap();
+                if body.get("stream").and_then(|v| v.as_bool()) == Some(true) {
+                    return ([("content-type", "text/event-stream")], "data: {\"fixture\":true}\n\ndata: [DONE]\n\n").into_response();
+                }
+                Json(serde_json::json!({"content":[{"type":"text","text":"fixture reply"}],"choices":[{"message":{"content":"fixture reply"}}]})).into_response()
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_url = format!("http://{}", listener.local_addr().unwrap());
+        let upstream_task = tokio::spawn(async move {
+            axum::serve(listener, upstream).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            Database::new(dir.path().join("acceptance.db").to_str().unwrap())
+                .await
+                .unwrap(),
+        );
+        db.migrate().await.unwrap();
+        let state = ProxyState {
+            db: db.clone(),
+            tokenizer: Arc::new(Tokenizer::new().unwrap()),
+            config: Arc::new(SovereignConfig::default()),
+            upstream: Arc::new(UpstreamClient::with_urls(
+                upstream_url.clone(),
+                upstream_url,
+            )),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let keys = BTreeMap::from([
+            ("alice".into(), "a".repeat(32)),
+            ("bob".into(), "b".repeat(32)),
+        ]);
+        let security =
+            Arc::new(HttpSecurity::new(addr, HttpService::Proxy, keys, vec![], vec![]).unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router(state, security))
+                .await
+                .unwrap();
+        });
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}");
+        for (path, stream, key, user, content) in [
+            (
+                "/v1/messages",
+                false,
+                "a".repeat(32),
+                "alice",
+                serde_json::json!([{"type":"text","text":"Summarize the release."},{"type":"image","source":{"type":"url","url":"https://example.invalid/fixture.png"}}]),
+            ),
+            (
+                "/v1/chat/completions",
+                false,
+                "b".repeat(32),
+                "bob",
+                serde_json::json!("Summarize the release."),
+            ),
+            (
+                "/v1/messages",
+                true,
+                "a".repeat(32),
+                "alice",
+                serde_json::json!("Summarize the release."),
+            ),
+            (
+                "/v1/chat/completions",
+                true,
+                "b".repeat(32),
+                "bob",
+                serde_json::json!("Summarize the release."),
+            ),
+        ] {
+            let response = client.post(format!("{base}{path}")).header("x-sovereign-key", key)
+                .header("authorization", "Bearer provider-fixture").header("x-api-key", "anthropic-fixture")
+                .header("anthropic-version", "2023-06-01").header("cookie", "private-browser-cookie")
+                .json(&serde_json::json!({"model":"fixture-model","max_tokens":32,"stream":stream,"messages":[{"role":"user","content":content}],"user_id":"mallory"})).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            if stream {
+                assert!(response.text().await.unwrap().contains("[DONE]"));
+            } else {
+                assert!(response
+                    .json::<serde_json::Value>()
+                    .await
+                    .unwrap()
+                    .get("content")
+                    .is_some());
+            }
+            let (forwarded_path, headers, body) = receive.recv().await.unwrap();
+            assert_eq!(forwarded_path, path);
+            assert_eq!(headers["authorization"], "Bearer provider-fixture");
+            assert_eq!(headers["x-api-key"], "anthropic-fixture");
+            assert!(!headers.contains_key("x-sovereign-key") && !headers.contains_key("cookie"));
+            assert_eq!(body["model"], "fixture-model");
+            if content.is_array() {
+                assert_eq!(body["messages"][0]["content"][1], content[1]);
+            }
+            assert!(!db.get_recent_prompts(user, 10).await.unwrap().is_empty());
+        }
+        for (key, host, origin, expected) in [
+            (None, None, None, StatusCode::UNAUTHORIZED),
+            (
+                Some("a".repeat(32)),
+                Some("evil.example"),
+                None,
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                Some("a".repeat(32)),
+                None,
+                Some("https://evil.example"),
+                StatusCode::FORBIDDEN,
+            ),
+        ] {
+            let mut request = client.post(format!("{base}/v1/messages")).json(
+                &serde_json::json!({"messages":[{"role":"user","content":"Summarize fixture"}]}),
+            );
+            if let Some(key) = key {
+                request = request.header("x-sovereign-key", key);
+            }
+            if let Some(host) = host {
+                request = request.header("host", host);
+            }
+            if let Some(origin) = origin {
+                request = request.header("origin", origin);
+            }
+            assert_eq!(request.send().await.unwrap().status(), expected);
+        }
+        assert!(
+            receive.try_recv().is_err(),
+            "Rejected requests must not reach provider"
+        );
+        assert!(db
+            .get_recent_prompts("mallory", 10)
+            .await
+            .unwrap()
+            .is_empty());
+        task.abort();
+        upstream_task.abort();
     }
 }
