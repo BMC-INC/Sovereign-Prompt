@@ -6,16 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
 ### Added
+
+- Authenticated Streamable HTTP at `/mcp`, with bounded legacy `/sse` compatibility and unchanged stdio tool contracts.
+- Credential-bound HTTP identities, dashboard session revocation, Host/Origin validation, and request/session limits.
+- Protocol, real PostgreSQL, provider-streaming, and dashboard WebSocket compatibility tests; five-platform release archives containing both binaries.
 
 - Task-level metrics in `savings_report` and `team_report`: `attempts_to_usable` (prompts per positively-rated output), `cost_per_accepted_output` (per model, inside `cost_estimates`), and `governance_clean_rate` (fraction of prompts with approved governance status)
 - README section "How Savings Actually Work" explaining per-prompt token delta vs task-level savings
 
 ### Changed
 
+- Updated rmcp to 3.8 and aligned both package versions with the next release tag, 0.4.0.
+- Non-loopback HTTP listeners now require credentials and explicit allowed hosts. Local stdio commands remain unchanged.
+- Dependency audits run without ignored advisories; the unused MySQL/RSA dependency graph is removed.
+
 - **Breaking (report JSON):** renamed the per-prompt figure in `savings_report` and `team_report` output to reflect what it measures — `total_tokens_saved` → `total_token_delta`, `average_savings_percentage` → `average_token_delta_percentage`, and in `daily_trend`/`member_breakdown`, `tokens_saved` → `token_delta`, `savings_percentage` → `token_delta_percentage`. Per-prompt records, `get_stats`, and the dashboard payload are unchanged.
 
 ### Fixed
+
+- PostgreSQL parameter binding and numeric decoding, including existing REAL-column compatibility.
+- Cross-user learning insights and prompt-record access through authenticated HTTP.
+- Forwarding of local proxy credentials/cookies to upstream providers.
 
 - Landing page GitHub links pointed at the wrong org; clone snippet used the wrong directory name
 
