@@ -1,4 +1,5 @@
 use anyhow::Result;
+use sovereign_prompt::auth::{HttpSecurity, HttpService};
 use sovereign_prompt::{dashboard, db, server};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,28 +15,37 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    let database_url = std::env::var("DATABASE_URL")
-        .or_else(|_| std::env::var("SOVEREIGN_DB_PATH").map(|p| format!("sqlite://{}?mode=rwc", p)))
-        .unwrap_or_else(|_| "sqlite://./sovereign_prompt.db?mode=rwc".to_string());
-
-    let db = Arc::new(db::Database::new(&database_url).await?);
-    db.migrate().await?;
-
-    let dashboard_addr = std::env::var("SOVEREIGN_DASHBOARD_ADDR")
-        .ok()
-        .and_then(|addr| addr.parse::<SocketAddr>().ok())
-        .unwrap_or_else(|| "127.0.0.1:8787".parse().unwrap());
+    let dashboard_addr = parse_bind("SOVEREIGN_DASHBOARD_ADDR", "127.0.0.1:8787")?;
     let mcp_transport = std::env::var("SOVEREIGN_MCP_TRANSPORT")
         .unwrap_or_else(|_| "stdio".to_string())
         .to_lowercase();
-    let mcp_sse_addr = std::env::var("SOVEREIGN_MCP_SSE_ADDR")
-        .ok()
-        .and_then(|addr| addr.parse::<SocketAddr>().ok())
-        .unwrap_or_else(|| "127.0.0.1:8790".parse().unwrap());
-    let dashboard_only = std::env::var("SOVEREIGN_DASHBOARD_ONLY")
-        .ok()
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false);
+    if !matches!(mcp_transport.as_str(), "stdio" | "sse" | "http") {
+        anyhow::bail!("SOVEREIGN_MCP_TRANSPORT must be stdio, sse, or http");
+    }
+    let mcp_sse_addr = parse_bind("SOVEREIGN_MCP_SSE_ADDR", "127.0.0.1:8790")?;
+    let dashboard_only = match std::env::var("SOVEREIGN_DASHBOARD_ONLY").as_deref() {
+        Err(std::env::VarError::NotPresent) | Ok("0" | "false" | "FALSE" | "no" | "NO") => false,
+        Ok("1" | "true" | "TRUE" | "yes" | "YES") => true,
+        _ => anyhow::bail!("SOVEREIGN_DASHBOARD_ONLY must be true or false"),
+    };
+    // Reject insecure explicit HTTP configuration before opening a database or
+    // spawning an optional dashboard. Stdio continues to use OS process isolation.
+    HttpSecurity::from_env(dashboard_addr, HttpService::Dashboard)?;
+    if matches!(mcp_transport.as_str(), "sse" | "http") {
+        HttpSecurity::from_env(mcp_sse_addr, HttpService::Mcp)?;
+    }
+    let database_url = std::env::var("DATABASE_URL")
+        .or_else(|_| std::env::var("SOVEREIGN_DB_PATH"))
+        .unwrap_or_else(|_| "sqlite://./sovereign_prompt.db?mode=rwc".to_string());
+    let db = Arc::new(db::Database::new(&database_url).await?);
+    db.migrate().await?;
+    if dashboard_only {
+        tokio::select! {
+            result = dashboard::run(db, dashboard_addr) => result?,
+            _ = tokio::signal::ctrl_c() => {},
+        }
+        return Ok(());
+    }
 
     let dashboard_db = db.clone();
     tokio::spawn(async move {
@@ -47,16 +57,12 @@ async fn main() -> Result<()> {
     tracing::info!("SovereignPrompt MCP server starting...");
     tracing::info!("Dashboard available at http://{}", dashboard_addr);
 
-    if dashboard_only {
-        tracing::info!("Running in dashboard-only mode.");
-        tokio::signal::ctrl_c().await?;
-        tracing::info!("Received shutdown signal, exiting gracefully...");
-        return Ok(());
-    }
-
-    if mcp_transport == "sse" {
-        tracing::info!("Starting MCP SSE transport at http://{}", mcp_sse_addr);
-        server::run_sse(db, mcp_sse_addr).await?;
+    if matches!(mcp_transport.as_str(), "sse" | "http") {
+        tracing::info!(
+            "Starting MCP HTTP and compatibility SSE transports at http://{}",
+            mcp_sse_addr
+        );
+        sovereign_prompt::http_mcp::run(db, mcp_sse_addr).await?;
         return Ok(());
     }
 
@@ -73,4 +79,11 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_bind(name: &str, default: &str) -> Result<SocketAddr> {
+    std::env::var(name)
+        .unwrap_or_else(|_| default.into())
+        .parse()
+        .map_err(|error| anyhow::anyhow!("Invalid {name}: {error}"))
 }

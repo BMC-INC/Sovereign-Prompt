@@ -1,85 +1,97 @@
 name: Release
-
 on:
   push:
-    tags:
-      - 'v*'
-
+    tags: ['v*']
+  workflow_dispatch:
 permissions:
-  contents: write
-
+  contents: read
 jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: sovereign-prompt-linux-x86_64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: sovereign-prompt-linux-aarch64
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: sovereign-prompt-macos-x86_64
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: sovereign-prompt-macos-aarch64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            artifact: sovereign-prompt-windows-x86_64.exe
-
     steps:
       - uses: actions/checkout@v4
-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: .
-
-      - name: Build
+      - name: Install Linux cross compiler
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Verify versions and tag
+        shell: bash
+        run: |
+          python - <<'PYTHON'
+          import os, tomllib
+          versions = {tomllib.load(open(path, 'rb'))['package']['version'] for path in ['sovereign-prompt/Cargo.toml', 'sovereign-proxy/Cargo.toml']}
+          assert len(versions) == 1
+          assert os.environ['GITHUB_REF'] == 'refs/tags/v' + versions.pop()
+          PYTHON
+      - name: Build both applications
         run: cargo build --workspace --locked --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-
-      - name: Rename binary (unix)
-        if: runner.os != 'Windows'
-        run: cp target/${{ matrix.target }}/release/sovereign-prompt ${{ matrix.artifact }}
-
-      - name: Rename binary (windows)
-        if: runner.os == 'Windows'
-        run: cp target/${{ matrix.target }}/release/sovereign-prompt.exe ${{ matrix.artifact }}
-
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+      - name: Package binaries and documentation
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          python - <<'PYTHON'
+          import os, pathlib, tarfile, zipfile
+          target = os.environ['RELEASE_TARGET']
+          windows = 'windows' in target
+          extension = '.exe' if windows else ''
+          files = [(pathlib.Path('target')/target/'release'/(name+extension), name+extension) for name in ['sovereign-prompt','sovereign-proxy']]
+          files += [(pathlib.Path(name),name) for name in ['LICENSE','README.md','SECURITY.md']]
+          pathlib.Path('dist').mkdir()
+          name = 'sovereign-prompt-' + os.environ['GITHUB_REF_NAME'] + '-' + target
+          if windows:
+              with zipfile.ZipFile('dist/'+name+'.zip','w',zipfile.ZIP_DEFLATED) as archive:
+                  for path, name in files: archive.write(path,name)
+          else:
+              with tarfile.open('dist/'+name+'.tar.gz','w:gz') as archive:
+                  for path, name in files: archive.add(path,arcname=name)
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
-
+          name: ${{ matrix.target }}
+          path: dist/*
   release:
-    name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: dist
           merge-multiple: true
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: artifacts/*
+      - name: Checksum downloads
+        run: cd dist && sha256sum * > SHA256SUMS
+      - name: Publish validated release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Sovereign Prompt $RELEASE_TAG" --notes-file RELEASE_NOTES.md

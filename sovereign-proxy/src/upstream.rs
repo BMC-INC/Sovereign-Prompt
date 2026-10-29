@@ -21,7 +21,12 @@ impl UpstreamClient {
 
     pub(crate) fn with_urls(anthropic_url: String, openai_url: String) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .expect("valid upstream HTTP client configuration"),
             anthropic_url,
             openai_url,
         }
@@ -48,12 +53,8 @@ impl UpstreamClient {
         // Forward relevant headers (auth, content-type, api version, etc.)
         // Skip hop-by-hop headers that shouldn't be forwarded
         for (key, value) in headers.iter() {
-            let name = key.as_str().to_lowercase();
-            match name.as_str() {
-                "host" | "content-length" | "transfer-encoding" | "connection" => continue,
-                _ => {
-                    req = req.header(key.clone(), value.clone());
-                }
+            if should_forward_request_header(key.as_str()) {
+                req = req.header(key.clone(), value.clone());
             }
         }
 
@@ -83,12 +84,8 @@ impl UpstreamClient {
         let mut req = self.client.post(&url).body(body);
 
         for (key, value) in headers.iter() {
-            let name = key.as_str().to_lowercase();
-            match name.as_str() {
-                "host" | "content-length" | "transfer-encoding" | "connection" => continue,
-                _ => {
-                    req = req.header(key.clone(), value.clone());
-                }
+            if should_forward_request_header(key.as_str()) {
+                req = req.header(key.clone(), value.clone());
             }
         }
 
@@ -97,5 +94,59 @@ impl UpstreamClient {
         let resp_headers = resp.headers().clone();
 
         Ok((status, resp_headers, resp))
+    }
+}
+
+// Provider credentials remain intact; local service credentials and browser/session
+// headers must never cross the upstream trust boundary.
+fn should_forward_request_header(name: &str) -> bool {
+    !matches!(
+        name,
+        "host"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "upgrade"
+            | "cookie"
+            | "origin"
+            | "referer"
+            | "x-sovereign-key"
+            | "x-forwarded-for"
+            | "x-forwarded-host"
+            | "x-forwarded-proto"
+            | "forwarded"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_credentials_are_removed_and_provider_credentials_preserved() {
+        for name in [
+            "x-sovereign-key",
+            "cookie",
+            "origin",
+            "proxy-authorization",
+            "forwarded",
+        ] {
+            assert!(!should_forward_request_header(name), "{name}");
+        }
+        for name in [
+            "authorization",
+            "x-api-key",
+            "anthropic-version",
+            "anthropic-beta",
+            "openai-project",
+            "content-type",
+        ] {
+            assert!(should_forward_request_header(name), "{name}");
+        }
     }
 }

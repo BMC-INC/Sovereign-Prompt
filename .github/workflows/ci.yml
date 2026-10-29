@@ -11,15 +11,28 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-      - run: cargo test
+      - run: cargo test --workspace --locked
+      - uses: actions/setup-python@v5
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          python-version: '3.12'
+      - name: Dashboard login and WebSocket revocation
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python -m pip install httpx==0.28.1 websockets==15.0.1
+          python scripts/smoke_dashboard.py --binary target/debug/sovereign-prompt
 
   clippy:
     name: Clippy
@@ -32,7 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   fmt:
     name: Format
@@ -42,7 +55,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --check
+      - run: cargo fmt --all --check
 
   audit:
     name: Security Audit
@@ -52,6 +65,27 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run audit
-        # RUSTSEC-2023-0071: rsa timing sidechannel, no fixed version available (pulled in via sqlx-mysql, unused backend)
-        # RUSTSEC-2026-0189: rmcp fix requires 0.1 -> 1.4 major upgrade; tracked separately
-        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0189
+        run: cargo audit
+
+  postgres:
+    name: PostgreSQL compatibility
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sovereign
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: sovereign_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sovereign -d sovereign_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Exercise PostgreSQL migrations, persistence, reports, and tenant scope
+        env:
+          SOVEREIGN_TEST_POSTGRES_URL: postgres://sovereign:test-only-password@localhost:5432/sovereign_test
+        run: cargo test -p sovereign-prompt --test postgres_test --locked -- --ignored

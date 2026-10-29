@@ -1,6 +1,6 @@
 [package]
 name = "sovereign-prompt"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["ExecLayer Inc."]
 description = "SovereignPrompt — Real-time MCP prompt optimization with persistence and token analysis"
@@ -11,11 +11,14 @@ name = "sovereign-prompt"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "0.1", features = ["server", "transport-io", "transport-sse-server"] }
+rmcp = { version = "3.8", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "postgres", "any"] }
+# Pin matching internal driver APIs; avoid the umbrella crate’s optional MySQL/RSA lock graph.
+sqlx-core = { version = "=0.8.6", features = ["_rt-tokio", "_tls-rustls-ring-webpki", "any"] }
+sqlx-sqlite = { version = "=0.8.6", features = ["any", "bundled"] }
+sqlx-postgres = { version = "=0.8.6", features = ["any"] }
 tiktoken-rs = "0.5"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -29,6 +32,10 @@ sha2 = "0.10"
 hmac = "0.12"
 hex = "0.4"
 toml = "0.8"
+percent-encoding = "2"
+tokio-stream = "0.1"
+tokio-util = "0.7"
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

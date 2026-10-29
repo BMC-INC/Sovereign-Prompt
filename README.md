@@ -20,7 +20,7 @@ This repository contains two working Rust services intended for **local evaluati
 
 The repository also includes a separate promotional website in [`web/`](web/) and video source in [`sovereign-prompt-video/`](sovereign-prompt-video/). Neither is required to run the services.
 
-The current Cargo packages are version **0.1.0**. Historical feature announcements in the [changelog](CHANGELOG.md) use a separate sequence; they are not evidence of published binary releases or production certification.
+The current Cargo packages are version **0.4.0**. Earlier release tags advanced through 0.3.0 while package metadata remained at 0.1.0; this release aligns both package versions with the release tag. See the [changelog](CHANGELOG.md) for project history.
 
 ## What you can evaluate
 
@@ -35,7 +35,7 @@ Refinement can add structure and **increase** token counts. Token deltas are mea
 
 ## Quick start
 
-Install a current stable Rust toolchain, then build from the repository root:
+Install a current stable Rust toolchain (Rust 1.88 or newer), then build from the repository root:
 
 ```bash
 git clone https://github.com/BMC-INC/Sovereign-Prompt.git
@@ -77,7 +77,14 @@ Start with:
 {"prompt":"Summarize these release notes in five bullets for a developer audience.","domain":"documentation","explain_mode":true}
 ```
 
-Clients must support the server's transport and tools. Compatibility with every named MCP product has not been certified.
+Stdio keeps the existing no-argument executable command and the same fifteen tool names and input schemas. Regression tests negotiate MCP `2024-11-05`, `2025-03-26`, and `2025-11-25`, and verify supported-version fallback for a newer client request. For command-line clients, after building:
+
+```bash
+claude mcp add --transport stdio sovereign-prompt -- "$(realpath target/release/sovereign-prompt)"
+codex mcp add sovereign-prompt -- "$(realpath target/release/sovereign-prompt)"
+```
+
+These commands register the server with the respective client; they do not make model calls. Keep an existing `SOVEREIGN_DB_PATH` setting when updating an installed binary. Claude Desktop uses the `mcpServers` configuration above. Remote Claude.ai integrations need an authenticated HTTPS endpoint and a compatible gateway; this repository does not provide an OAuth authorization server.
 
 ## MCP tools
 
@@ -91,6 +98,24 @@ Clients must support the server's transport and tools. Compatibility with every 
 
 Governance status is stored with a record. It is a review signal, not a complete data-loss-prevention or authorization system. The MCP optimizer may return a record marked rejected; callers must inspect that status before using the text.
 
+## HTTP MCP and access control
+
+For clients that need HTTP, start the server with an explicit API key. Keep the generated key in your secret manager or protected process environment:
+
+```bash
+export SOVEREIGN_API_KEY="$(openssl rand -hex 32)"
+export SOVEREIGN_USER_ID="developer"
+SOVEREIGN_MCP_TRANSPORT=http ./target/release/sovereign-prompt
+```
+
+The current transport is `http://127.0.0.1:8790/mcp`. Existing HTTP+SSE clients can continue using `http://127.0.0.1:8790/sse`; `SOVEREIGN_MCP_TRANSPORT=sse` still enables that endpoint. Both paths use the same authentication and ownership checks. Send `Authorization: Bearer` with the configured key, or `X-API-Key`. The legacy session ID is not a credential.
+
+An HTTP key binds requests to `SOVEREIGN_USER_ID` (default `anonymous`). A caller cannot select another user's history, reports, or prompt IDs. To configure multiple identities, set `SOVEREIGN_API_KEYS` to a JSON object mapping each user ID to its own unique secret. Keys must contain at least 32 bytes. Stdio and loopback HTTP with no configured keys retain the original local operator access; use credentials whenever other local software must not share that access.
+
+All HTTP services validate exact Host authorities and browser Origins. Non-loopback binding requires credentials and `SOVEREIGN_ALLOWED_HOSTS`, a comma-separated list of exact `host:port` authorities. `SOVEREIGN_ALLOWED_ORIGINS` optionally permits additional exact HTTP(S) origins. Use an HTTPS reverse proxy for remote access; forward the configured Host, and do not enable unrestricted origins. See [security boundaries](SECURITY.md) for limits and session behavior.
+
+The dashboard accepts the key through its password field and creates an opaque, one-hour session cookie with `HttpOnly` and `SameSite=Strict` (`Secure` for HTTPS origins). It does not put API keys in URLs or browser storage. Reload restores the authenticated identity; signing out revokes the session.
+
 ## HTTP proxy
 
 ```bash
@@ -98,6 +123,8 @@ Governance status is stored with a record. It is a review signal, not a complete
 ```
 
 The proxy listens on `127.0.0.1:8788`. It exposes `/health`, `/v1/messages`, and `/v1/chat/completions`. Point a compatible HTTP client at this local endpoint while retaining the credentials required by your upstream provider. It does not implement the OpenAI Responses API or arbitrary provider routes.
+
+When HTTP authentication is configured, supply the local credential as **`X-Sovereign-Key`**. Provider `Authorization` and `X-API-Key` headers keep their upstream meaning. The local key and browser cookies are removed before forwarding. Stored proxy records belong to the authenticated identity; uncredentialed loopback use retains the `proxy` user label.
 
 | Environment variable | Default |
 | --- | --- |
@@ -120,12 +147,14 @@ Set a private `SOVEREIGN_HMAC_KEY` before relying on record authentication. The 
 ## Optional local Docker setup
 
 ```bash
+export SOVEREIGN_API_KEY="$(openssl rand -hex 32)"
+export SOVEREIGN_HMAC_KEY="$(openssl rand -hex 32)"
 docker compose up --build
 ```
 
-The development compose file builds from the workspace root, starts PostgreSQL, and publishes the dashboard and legacy SSE endpoint on loopback only. Its database credentials and fallback signing key are development defaults. Stop with `docker compose down`; the named database volume persists.
+The development compose file builds from the workspace root, starts PostgreSQL, and publishes the dashboard and legacy SSE endpoint on loopback only. The compose file requires the two generated keys above; database credentials remain development defaults. Stop with `docker compose down`; the named database volume persists.
 
-Legacy SSE is available at `http://127.0.0.1:8790/sse` when `SOVEREIGN_MCP_TRANSPORT=sse`. The HTTP services do not provide complete authentication or tenant isolation. Do not expose them publicly without an authenticated gateway, host/origin validation, and a reviewed deployment design. Prefer stdio for local MCP use. See [security boundaries and dependency caveats](SECURITY.md).
+Current Streamable HTTP and the legacy SSE compatibility endpoint are both available through port 8790. Use the same configured API key for MCP and dashboard access. Prefer stdio for a local desktop client; use a reviewed HTTPS gateway for remote deployment.
 
 ## Development and validation
 
@@ -133,9 +162,10 @@ Legacy SSE is available at `http://127.0.0.1:8790/sse` when `SOVEREIGN_MCP_TRANS
 cargo fmt --all --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo audit
 ```
 
-Tests cover analysis, persistence, governance, tokenization, signatures, API-message rewriting, and proxy rejection behavior. Provider compatibility, real model quality, deployment isolation, and all release targets require separate integration validation.
+Tests cover analysis, persistence, governance, tokenization, signatures, unchanged tool schemas, three stdio protocol versions and future-version fallback, authenticated HTTP/SSE, tenant isolation, and both provider formats with mocked JSON/streaming responses. These tests do not assess real model quality or certify every remote client, deployment, and release platform.
 
 [Architecture notes](sovereign-prompt/README.md) · [Contribution guide](CONTRIBUTING.md) · [Issues](https://github.com/BMC-INC/Sovereign-Prompt/issues)
 
