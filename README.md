@@ -111,7 +111,7 @@ Streaming responses pass through without output capture. Non-streaming text resp
 
 ## Configuration and storage
 
-Copy [`sovereign-prompt/sovereign_prompt.toml`](sovereign-prompt/sovereign_prompt.toml) to the working directory, or set `SOVEREIGN_CONFIG_PATH` to its path. Injection modes are `warn` (default), `rewrite`, and `reject`. Review configuration loading logs: an invalid file currently falls back to defaults.
+Copy [`sovereign-prompt/sovereign_prompt.toml`](sovereign-prompt/sovereign_prompt.toml) to the working directory, or set `SOVEREIGN_CONFIG_PATH` to its path. Injection modes are `warn` (default), `rewrite`, and `reject`. Invalid or unreadable configuration, unknown fields, and a missing explicitly selected file stop startup. Defaults apply only when no explicit path is set and the default file is absent.
 
 Both services accept `DATABASE_URL` for SQLite or PostgreSQL. `SOVEREIGN_DB_PATH` is the SQLite path fallback. Original prompts, refinements, and captured outputs are stored without application-level encryption; choose storage, access, backup, and retention controls appropriate to your data.
 

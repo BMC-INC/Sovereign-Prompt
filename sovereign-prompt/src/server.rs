@@ -1121,7 +1121,7 @@ fn build_server(db: Arc<Database>, config: SovereignConfig) -> SovereignPromptSe
 }
 
 pub async fn run(db: Arc<Database>) -> Result<()> {
-    let config = SovereignConfig::load();
+    let config = SovereignConfig::load()?;
     let server = build_server(db, config);
 
     let service = server.serve(rmcp::transport::stdio()).await?;
@@ -1131,7 +1131,7 @@ pub async fn run(db: Arc<Database>) -> Result<()> {
 }
 
 pub async fn run_sse(db: Arc<Database>, bind: SocketAddr) -> Result<()> {
-    let config = SovereignConfig::load();
+    let config = SovereignConfig::load()?;
     let server = build_server(db, config);
 
     let ct = rmcp::transport::sse_server::SseServer::serve(bind)
