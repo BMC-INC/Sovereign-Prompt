@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod dashboard;
 pub mod db;
 pub mod governance;
+pub mod http_mcp;
 pub mod optimizer;
 pub mod server;
 pub mod templates;

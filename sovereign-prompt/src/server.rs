@@ -14,7 +14,6 @@ use chrono::Utc;
 use rmcp::model::*;
 use rmcp::{ServerHandler, ServiceExt};
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -26,6 +25,7 @@ pub struct SovereignPromptServer {
     tokenizer: Arc<Tokenizer>,
     crypto: Arc<CryptoEngine>,
     config: Arc<SovereignConfig>,
+    principal: Option<crate::auth::Principal>,
 }
 
 impl SovereignPromptServer {
@@ -518,7 +518,7 @@ impl SovereignPromptServer {
         let json = serde_json::to_string_pretty(&json_value)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     async fn handle_capture_output(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -579,7 +579,7 @@ impl SovereignPromptServer {
         };
         let _ = self.db.insert_audit_log(&audit).await;
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::json!({
                 "status": "captured",
                 "prompt_id": prompt_id,
@@ -595,7 +595,7 @@ impl SovereignPromptServer {
         let json = serde_json::json!({
             "domains": PromptTemplateLibrary::available_domains(),
         });
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&json)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
@@ -631,7 +631,7 @@ impl SovereignPromptServer {
             })
         };
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&response)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
@@ -653,7 +653,7 @@ impl SovereignPromptServer {
         let json = serde_json::to_string_pretty(&stats)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     async fn handle_governance_check(
@@ -684,7 +684,7 @@ impl SovereignPromptServer {
             "current_status": record.approval_status,
         });
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&json)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?,
         )]))
@@ -746,7 +746,7 @@ impl SovereignPromptServer {
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::json!({
                 "prompt_id": prompt_id,
                 "status": status,
@@ -771,7 +771,7 @@ impl SovereignPromptServer {
         let json = serde_json::to_string_pretty(&trail)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     async fn handle_sign_optimization(
@@ -816,7 +816,7 @@ impl SovereignPromptServer {
         };
         let _ = self.db.insert_audit_log(&audit).await;
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::json!({
                 "prompt_id": prompt_id,
                 "content_hash": content_hash,
@@ -862,7 +862,7 @@ impl SovereignPromptServer {
             record.output_hash.as_deref(),
         );
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::json!({
                 "prompt_id": prompt_id,
                 "signature_valid": sig_valid,
@@ -897,7 +897,7 @@ impl SovereignPromptServer {
         let json = serde_json::to_string_pretty(&history)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     async fn handle_savings_report(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -922,7 +922,7 @@ impl SovereignPromptServer {
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     async fn handle_rate_optimization(
@@ -993,7 +993,7 @@ impl SovereignPromptServer {
         };
         let _ = self.db.insert_audit_log(&audit).await;
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::json!({
                 "status": "rated",
                 "prompt_id": prompt_id,
@@ -1019,7 +1019,7 @@ impl SovereignPromptServer {
         let json = serde_json::to_string_pretty(&insights)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     async fn handle_team_report(&self, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -1048,65 +1048,142 @@ impl SovereignPromptServer {
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 }
 
 impl ServerHandler for SovereignPromptServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "SovereignPrompt".to_string(),
-                version: "0.1.0".to_string(),
-            },
-            ..Default::default()
-        }
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_server_info(
+            Implementation::new("SovereignPrompt", env!("CARGO_PKG_VERSION")),
+        )
     }
 
     async fn list_tools(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult {
-            tools: Self::build_tool_list(),
-            next_cursor: None,
-        })
+        Ok(ListToolsResult::with_all_items(Self::build_tool_list()))
     }
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
-        _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let args = request.arguments.unwrap_or_default();
-        match request.name.as_ref() {
-            "optimize_prompt" => self.handle_optimize_prompt(&args).await,
-            "capture_output" => self.handle_capture_output(&args).await,
-            "get_stats" => self.handle_get_stats(&args).await,
-            "get_history" => self.handle_get_history(&args).await,
-            "list_templates" => self.handle_list_templates(&args).await,
-            "count_tokens" => self.handle_count_tokens(&args).await,
-            "governance_check" => self.handle_governance_check(&args).await,
-            "governance_approve" => self.handle_governance_approve(&args).await,
-            "get_audit_trail" => self.handle_get_audit_trail(&args).await,
-            "sign_optimization" => self.handle_sign_optimization(&args).await,
-            "verify_signature" => self.handle_verify_signature(&args).await,
-            "savings_report" => self.handle_savings_report(&args).await,
-            "rate_optimization" => self.handle_rate_optimization(&args).await,
-            "learning_insights" => self.handle_learning_insights(&args).await,
-            "team_report" => self.handle_team_report(&args).await,
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let principal = self.principal.as_ref().or_else(|| {
+            context
+                .extensions
+                .get::<axum::http::request::Parts>()
+                .and_then(|parts| parts.extensions.get::<crate::auth::Principal>())
+        });
+        let mut args = request.arguments.unwrap_or_default();
+        if serde_json::to_vec(&args).map_or(true, |value| value.len() > 256 * 1024) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Tool arguments exceed 256 KiB",
+            )])
+            .into());
+        }
+        if let Some(principal) = principal {
+            if let Err(error) = self
+                .scope_arguments(&request.name, &mut args, principal)
+                .await
+            {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(error.message)]).into());
+            }
+        }
+        self.dispatch(&request.name, &args).await.map(Into::into)
+    }
+}
+
+impl SovereignPromptServer {
+    pub(crate) fn with_principal(mut self, principal: Option<crate::auth::Principal>) -> Self {
+        self.principal = principal;
+        self
+    }
+
+    async fn scope_arguments(
+        &self,
+        tool: &str,
+        args: &mut JsonObject,
+        principal: &crate::auth::Principal,
+    ) -> Result<(), ErrorData> {
+        let denied = || {
+            ErrorData::invalid_params(
+                "The requested data is not available to this HTTP principal",
+                None,
+            )
+        };
+        if let Some(value) = args.get("user_id") {
+            if value.as_str() != Some(&principal.user_id) {
+                return Err(denied());
+            }
+        }
+        if matches!(
+            tool,
+            "optimize_prompt"
+                | "get_stats"
+                | "get_history"
+                | "savings_report"
+                | "learning_insights"
+        ) {
+            args.insert("user_id".into(), serde_json::json!(principal.user_id));
+        }
+        if tool == "team_report" {
+            if let Some(values) = args.get("user_ids") {
+                let values = values.as_array().ok_or_else(denied)?;
+                if values
+                    .iter()
+                    .any(|value| value.as_str() != Some(&principal.user_id))
+                {
+                    return Err(denied());
+                }
+            }
+            args.insert("user_ids".into(), serde_json::json!([principal.user_id]));
+        }
+        if let Some(prompt_id) = args.get("prompt_id") {
+            let prompt_id = prompt_id.as_str().ok_or_else(denied)?;
+            let record =
+                self.db.get_prompt_by_id(prompt_id).await.map_err(|_| {
+                    ErrorData::internal_error("Cannot authorize prompt access", None)
+                })?;
+            if !record.is_some_and(|record| record.user_id == principal.user_id) {
+                return Err(denied());
+            }
+        }
+        if matches!(tool, "governance_approve" | "rate_optimization") {
+            args.insert("actor".into(), serde_json::json!(principal.user_id));
+        }
+        Ok(())
+    }
+
+    async fn dispatch(&self, name: &str, args: &JsonObject) -> Result<CallToolResult, ErrorData> {
+        match name {
+            "optimize_prompt" => self.handle_optimize_prompt(args).await,
+            "capture_output" => self.handle_capture_output(args).await,
+            "get_stats" => self.handle_get_stats(args).await,
+            "get_history" => self.handle_get_history(args).await,
+            "list_templates" => self.handle_list_templates(args).await,
+            "count_tokens" => self.handle_count_tokens(args).await,
+            "governance_check" => self.handle_governance_check(args).await,
+            "governance_approve" => self.handle_governance_approve(args).await,
+            "get_audit_trail" => self.handle_get_audit_trail(args).await,
+            "sign_optimization" => self.handle_sign_optimization(args).await,
+            "verify_signature" => self.handle_verify_signature(args).await,
+            "savings_report" => self.handle_savings_report(args).await,
+            "rate_optimization" => self.handle_rate_optimization(args).await,
+            "learning_insights" => self.handle_learning_insights(args).await,
+            "team_report" => self.handle_team_report(args).await,
             _ => Err(ErrorData::invalid_params(
-                format!("unknown tool: {}", request.name),
+                format!("unknown tool: {name}"),
                 None,
             )),
         }
     }
 }
 
-fn build_server(db: Arc<Database>, config: SovereignConfig) -> SovereignPromptServer {
+pub(crate) fn build_server(db: Arc<Database>, config: SovereignConfig) -> SovereignPromptServer {
     let tokenizer = Tokenizer::new().expect("failed to initialize tokenizer");
     let hmac_key = std::env::var("SOVEREIGN_HMAC_KEY")
         .unwrap_or_else(|_| "sovereign-prompt-dev-key-change-in-production".to_string());
@@ -1117,6 +1194,7 @@ fn build_server(db: Arc<Database>, config: SovereignConfig) -> SovereignPromptSe
         tokenizer: Arc::new(tokenizer),
         crypto,
         config: Arc::new(config),
+        principal: None,
     }
 }
 
@@ -1127,22 +1205,5 @@ pub async fn run(db: Arc<Database>) -> Result<()> {
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
 
-    Ok(())
-}
-
-pub async fn run_sse(db: Arc<Database>, bind: SocketAddr) -> Result<()> {
-    let config = SovereignConfig::load()?;
-    let server = build_server(db, config);
-
-    let ct = rmcp::transport::sse_server::SseServer::serve(bind)
-        .await?
-        .with_service(move || server.clone());
-
-    tracing::info!("SovereignPrompt MCP SSE server listening on {}", bind);
-    tracing::info!("SSE endpoint: http://{}/sse", bind);
-
-    tokio::signal::ctrl_c().await?;
-    ct.cancel();
-    tracing::info!("SSE transport shutdown complete.");
     Ok(())
 }

@@ -3,8 +3,11 @@ use crate::types::{
     PromptRecord, SavingsReport, TeamReport, UserStats,
 };
 use anyhow::Result;
-use sqlx::any::AnyPoolOptions;
-use sqlx::{AnyPool, Row};
+use sqlx_core::{
+    any::{AnyPool, AnyPoolOptions},
+    query::query,
+    row::Row,
+};
 
 #[derive(Clone)]
 pub struct Database {
@@ -13,7 +16,14 @@ pub struct Database {
 
 impl Database {
     pub async fn new(url: &str) -> Result<Self> {
-        sqlx::any::install_default_drivers();
+        static DRIVERS: std::sync::Once = std::sync::Once::new();
+        DRIVERS.call_once(|| {
+            sqlx_core::any::driver::install_drivers(&[
+                sqlx_sqlite::any::DRIVER,
+                sqlx_postgres::any::DRIVER,
+            ])
+            .expect("SQLx drivers are installed once by SovereignPrompt");
+        });
         let db_url = if url.starts_with("postgres://")
             || url.starts_with("postgresql://")
             || url.starts_with("sqlite://")
@@ -30,7 +40,7 @@ impl Database {
     }
 
     pub async fn migrate(&self) -> Result<()> {
-        sqlx::query(
+        query(
             "CREATE TABLE IF NOT EXISTS prompts (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
@@ -40,7 +50,7 @@ impl Database {
                 original_token_count INTEGER NOT NULL,
                 refined_prompt TEXT NOT NULL,
                 refined_token_count INTEGER NOT NULL,
-                savings_percentage REAL NOT NULL,
+                savings_percentage DOUBLE PRECISION NOT NULL,
                 analysis_feedback TEXT NOT NULL,
                 output TEXT,
                 output_token_count INTEGER,
@@ -79,7 +89,7 @@ impl Database {
             .await?;
 
         // Audit log table
-        sqlx::query(
+        query(
             "CREATE TABLE IF NOT EXISTS audit_log (
                 id TEXT PRIMARY KEY,
                 prompt_id TEXT NOT NULL,
@@ -92,28 +102,28 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_prompt_id ON audit_log(prompt_id)")
+        query("CREATE INDEX IF NOT EXISTS idx_audit_log_prompt_id ON audit_log(prompt_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)")
+        query("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)")
+        query("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id)")
+        query("CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_prompts_created_at ON prompts(created_at)")
+        query("CREATE INDEX IF NOT EXISTS idx_prompts_created_at ON prompts(created_at)")
             .execute(&self.pool)
             .await?;
 
         // Learning signals table
-        sqlx::query(
+        query(
             "CREATE TABLE IF NOT EXISTS learning_signals (
                 id TEXT PRIMARY KEY,
                 prompt_id TEXT NOT NULL,
@@ -126,24 +136,21 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_learning_signals_prompt_id ON learning_signals(prompt_id)",
+        query("CREATE INDEX IF NOT EXISTS idx_learning_signals_prompt_id ON learning_signals(prompt_id)",
         )
         .execute(&self.pool)
         .await?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_learning_signals_signal ON learning_signals(signal)",
-        )
-        .execute(&self.pool)
-        .await?;
+        query("CREATE INDEX IF NOT EXISTS idx_learning_signals_signal ON learning_signals(signal)")
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
 
-    async fn add_column_if_missing(&self, query: &str) -> Result<()> {
-        let result: std::result::Result<sqlx::any::AnyQueryResult, sqlx::Error> =
-            sqlx::query(query).execute(&self.pool).await;
+    async fn add_column_if_missing(&self, statement: &str) -> Result<()> {
+        let result: std::result::Result<sqlx_core::any::AnyQueryResult, sqlx_core::error::Error> =
+            query(statement).execute(&self.pool).await;
         if let Err(err) = result {
             let msg = err.to_string().to_lowercase();
             if !msg.contains("duplicate column name") && !msg.contains("already exists") {
@@ -154,14 +161,13 @@ impl Database {
     }
 
     pub async fn insert_prompt(&self, record: &PromptRecord) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO prompts (
+        query("INSERT INTO prompts (
                 id, user_id, domain, token_model, original_prompt, original_token_count,
                 refined_prompt, refined_token_count, savings_percentage,
                 analysis_feedback, output, output_token_count, created_at,
                 governance_id, policy_version, approval_status,
                 content_hash, output_hash, signature, signed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
         )
         .bind(&record.id)
         .bind(&record.user_id)
@@ -194,7 +200,7 @@ impl Database {
         output: &str,
         output_token_count: i64,
     ) -> Result<()> {
-        sqlx::query("UPDATE prompts SET output = ?, output_token_count = ? WHERE id = ?")
+        query("UPDATE prompts SET output = $1, output_token_count = $2 WHERE id = $3")
             .bind(output)
             .bind(output_token_count)
             .bind(prompt_id)
@@ -204,21 +210,20 @@ impl Database {
     }
 
     pub async fn get_user_stats(&self, user_id: &str) -> Result<UserStats> {
-        let row: sqlx::any::AnyRow = sqlx::query(
+        let row: sqlx_core::any::AnyRow = query(
             "SELECT
                 COUNT(*) as total_prompts,
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as total_tokens_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
-            WHERE user_id = ?",
+            WHERE user_id = $1",
         )
         .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
 
         // Aggregate top issues from recent feedback
-        let feedback_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
-            "SELECT analysis_feedback FROM prompts WHERE user_id = ? ORDER BY created_at DESC LIMIT 100",
+        let feedback_rows: Vec<sqlx_core::any::AnyRow> = query("SELECT analysis_feedback FROM prompts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -255,8 +260,8 @@ impl Database {
     }
 
     pub async fn get_recent_prompts(&self, user_id: &str, limit: i64) -> Result<Vec<PromptRecord>> {
-        let rows: Vec<sqlx::any::AnyRow> =
-            sqlx::query("SELECT * FROM prompts WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+        let rows: Vec<sqlx_core::any::AnyRow> =
+            query("SELECT prompts.*, CAST(savings_percentage AS DOUBLE PRECISION) AS savings_percentage_f64 FROM prompts WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2")
                 .bind(user_id)
                 .bind(limit)
                 .fetch_all(&self.pool)
@@ -264,7 +269,7 @@ impl Database {
 
         let records = rows
             .into_iter()
-            .map(|r: sqlx::any::AnyRow| {
+            .map(|r: sqlx_core::any::AnyRow| {
                 let feedback_str: String = r.get("analysis_feedback");
                 PromptRecord {
                     id: r.get("id"),
@@ -275,7 +280,7 @@ impl Database {
                     original_token_count: r.get("original_token_count"),
                     refined_prompt: r.get("refined_prompt"),
                     refined_token_count: r.get("refined_token_count"),
-                    savings_percentage: r.get("savings_percentage"),
+                    savings_percentage: r.get("savings_percentage_f64"),
                     analysis_feedback: serde_json::from_str(&feedback_str).unwrap_or_default(),
                     output: r.try_get("output").ok().flatten(),
                     output_token_count: r.try_get("output_token_count").ok().flatten(),
@@ -302,7 +307,7 @@ impl Database {
     }
 
     pub async fn get_prompt_by_id(&self, prompt_id: &str) -> Result<Option<PromptRecord>> {
-        let row: Option<sqlx::any::AnyRow> = sqlx::query("SELECT * FROM prompts WHERE id = ?")
+        let row: Option<sqlx_core::any::AnyRow> = query("SELECT prompts.*, CAST(savings_percentage AS DOUBLE PRECISION) AS savings_percentage_f64 FROM prompts WHERE id = $1")
             .bind(prompt_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -319,7 +324,7 @@ impl Database {
                     original_token_count: r.get("original_token_count"),
                     refined_prompt: r.get("refined_prompt"),
                     refined_token_count: r.get("refined_token_count"),
-                    savings_percentage: r.get("savings_percentage"),
+                    savings_percentage: r.get("savings_percentage_f64"),
                     analysis_feedback: serde_json::from_str(&feedback_str).unwrap_or_default(),
                     output: r.try_get("output").ok().flatten(),
                     output_token_count: r.try_get("output_token_count").ok().flatten(),
@@ -345,7 +350,7 @@ impl Database {
     }
 
     pub async fn update_approval_status(&self, prompt_id: &str, status: &str) -> Result<()> {
-        sqlx::query("UPDATE prompts SET approval_status = ? WHERE id = ?")
+        query("UPDATE prompts SET approval_status = $1 WHERE id = $2")
             .bind(status)
             .bind(prompt_id)
             .execute(&self.pool)
@@ -359,7 +364,7 @@ impl Database {
         signature: &str,
         signed_at: &chrono::DateTime<chrono::Utc>,
     ) -> Result<()> {
-        sqlx::query("UPDATE prompts SET signature = ?, signed_at = ? WHERE id = ?")
+        query("UPDATE prompts SET signature = $1, signed_at = $2 WHERE id = $3")
             .bind(signature)
             .bind(signed_at.to_rfc3339())
             .bind(prompt_id)
@@ -369,7 +374,7 @@ impl Database {
     }
 
     pub async fn update_output_hash(&self, prompt_id: &str, output_hash: &str) -> Result<()> {
-        sqlx::query("UPDATE prompts SET output_hash = ? WHERE id = ?")
+        query("UPDATE prompts SET output_hash = $1 WHERE id = $2")
             .bind(output_hash)
             .bind(prompt_id)
             .execute(&self.pool)
@@ -378,9 +383,9 @@ impl Database {
     }
 
     pub async fn insert_audit_log(&self, entry: &AuditLogEntry) -> Result<()> {
-        sqlx::query(
+        query(
             "INSERT INTO audit_log (id, prompt_id, action, actor, detail, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&entry.id)
         .bind(&entry.prompt_id)
@@ -411,7 +416,7 @@ impl Database {
         let date_str = date_filter.to_rfc3339();
 
         // Aggregate totals
-        let row: sqlx::any::AnyRow = sqlx::query(
+        let row: sqlx_core::any::AnyRow = query(
             "SELECT
                 COUNT(*) as total_prompts,
                 COALESCE(SUM(original_token_count), 0) as total_original,
@@ -419,7 +424,7 @@ impl Database {
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as total_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
-            WHERE user_id = ? AND created_at >= ?",
+            WHERE user_id = $1 AND created_at >= $2",
         )
         .bind(user_id)
         .bind(&date_str)
@@ -433,10 +438,10 @@ impl Database {
         let avg_savings: f64 = row.get("avg_savings");
 
         // Task-level metrics: accepted outputs = prompts with a positive learning signal
-        let accepted_row: sqlx::any::AnyRow = sqlx::query(
+        let accepted_row: sqlx_core::any::AnyRow = query(
             "SELECT COUNT(DISTINCT ls.prompt_id) as cnt
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
-             WHERE ls.signal = 'positive' AND p.user_id = ? AND p.created_at >= ?",
+             WHERE ls.signal = 'positive' AND p.user_id = $1 AND p.created_at >= $2",
         )
         .bind(user_id)
         .bind(&date_str)
@@ -444,9 +449,9 @@ impl Database {
         .await?;
         let accepted_outputs: i64 = accepted_row.get("cnt");
 
-        let approved_row: sqlx::any::AnyRow = sqlx::query(
+        let approved_row: sqlx_core::any::AnyRow = query(
             "SELECT COUNT(*) as cnt FROM prompts
-             WHERE user_id = ? AND created_at >= ? AND approval_status = 'approved'",
+             WHERE user_id = $1 AND created_at >= $2 AND approval_status = 'approved'",
         )
         .bind(user_id)
         .bind(&date_str)
@@ -486,8 +491,7 @@ impl Database {
             .collect();
 
         // Top issues
-        let feedback_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
-            "SELECT analysis_feedback FROM prompts WHERE user_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 100",
+        let feedback_rows: Vec<sqlx_core::any::AnyRow> = query("SELECT analysis_feedback FROM prompts WHERE user_id = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT 100",
         )
         .bind(user_id)
         .bind(&date_str)
@@ -515,14 +519,14 @@ impl Database {
             .collect();
 
         // Daily trend
-        let trend_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
+        let trend_rows: Vec<sqlx_core::any::AnyRow> = query(
             "SELECT
                 SUBSTR(created_at, 1, 10) as day,
                 COUNT(*) as prompts,
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as tokens_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
-            WHERE user_id = ? AND created_at >= ?
+            WHERE user_id = $1 AND created_at >= $2
             GROUP BY SUBSTR(created_at, 1, 10)
             ORDER BY day ASC",
         )
@@ -533,7 +537,7 @@ impl Database {
 
         let daily_trend: Vec<DailyTrend> = trend_rows
             .into_iter()
-            .map(|r: sqlx::any::AnyRow| DailyTrend {
+            .map(|r: sqlx_core::any::AnyRow| DailyTrend {
                 date: r.get("day"),
                 prompts: r.get("prompts"),
                 token_delta: r.get("tokens_saved"),
@@ -558,9 +562,9 @@ impl Database {
     }
 
     pub async fn insert_learning_signal(&self, signal: &LearningSignal) -> Result<()> {
-        sqlx::query(
+        query(
             "INSERT INTO learning_signals (id, prompt_id, signal, comment, actor, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&signal.id)
         .bind(&signal.prompt_id)
@@ -575,43 +579,41 @@ impl Database {
 
     pub async fn get_learning_insights(&self, user_id: Option<&str>) -> Result<LearningInsights> {
         let total: i64 = if let Some(uid) = user_id {
-            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE p.user_id = ?")
+            let r: sqlx_core::any::AnyRow = query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE p.user_id = $1")
                 .bind(uid)
                 .fetch_one(&self.pool)
                 .await?;
             r.get("cnt")
         } else {
-            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals")
+            let r: sqlx_core::any::AnyRow = query("SELECT COUNT(*) as cnt FROM learning_signals")
                 .fetch_one(&self.pool)
                 .await?;
             r.get("cnt")
         };
         let positive: i64 = if let Some(uid) = user_id {
-            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'positive' AND p.user_id = ?")
+            let r: sqlx_core::any::AnyRow = query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'positive' AND p.user_id = $1")
                 .bind(uid)
                 .fetch_one(&self.pool)
                 .await?;
             r.get("cnt")
         } else {
-            let r: sqlx::any::AnyRow = sqlx::query(
-                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'positive'",
-            )
-            .fetch_one(&self.pool)
-            .await?;
+            let r: sqlx_core::any::AnyRow =
+                query("SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'positive'")
+                    .fetch_one(&self.pool)
+                    .await?;
             r.get("cnt")
         };
         let negative: i64 = if let Some(uid) = user_id {
-            let r: sqlx::any::AnyRow = sqlx::query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'negative' AND p.user_id = ?")
+            let r: sqlx_core::any::AnyRow = query("SELECT COUNT(*) as cnt FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id WHERE ls.signal = 'negative' AND p.user_id = $1")
                 .bind(uid)
                 .fetch_one(&self.pool)
                 .await?;
             r.get("cnt")
         } else {
-            let r: sqlx::any::AnyRow = sqlx::query(
-                "SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'negative'",
-            )
-            .fetch_one(&self.pool)
-            .await?;
+            let r: sqlx_core::any::AnyRow =
+                query("SELECT COUNT(*) as cnt FROM learning_signals WHERE signal = 'negative'")
+                    .fetch_one(&self.pool)
+                    .await?;
             r.get("cnt")
         };
 
@@ -622,18 +624,20 @@ impl Database {
         };
 
         // Best domains (highest positive rate)
-        let domain_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
+        let domain_rows: Vec<sqlx_core::any::AnyRow> = query(
             "SELECT p.domain, COUNT(*) as cnt
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
-             WHERE ls.signal = 'positive'
+             WHERE ls.signal = 'positive' AND (CAST($1 AS TEXT) IS NULL OR p.user_id = $2)
              GROUP BY p.domain ORDER BY cnt DESC LIMIT 5",
         )
+        .bind(user_id)
+        .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
 
         let best_domains: Vec<String> = domain_rows
             .iter()
-            .map(|r: &sqlx::any::AnyRow| {
+            .map(|r: &sqlx_core::any::AnyRow| {
                 let domain: String = r.get("domain");
                 let cnt: i64 = r.get("cnt");
                 format!("{} ({})", domain, cnt)
@@ -641,12 +645,14 @@ impl Database {
             .collect();
 
         // Worst issues (most common in negatively-rated prompts)
-        let issue_rows: Vec<sqlx::any::AnyRow> = sqlx::query(
+        let issue_rows: Vec<sqlx_core::any::AnyRow> = query(
             "SELECT p.analysis_feedback
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
-             WHERE ls.signal = 'negative'
+             WHERE ls.signal = 'negative' AND (CAST($1 AS TEXT) IS NULL OR p.user_id = $2)
              ORDER BY ls.created_at DESC LIMIT 50",
         )
+        .bind(user_id)
+        .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -671,20 +677,24 @@ impl Database {
             .collect();
 
         // Average savings for positive vs negative
-        let avg_pos_row: sqlx::any::AnyRow = sqlx::query(
+        let avg_pos_row: sqlx_core::any::AnyRow = query(
             "SELECT COALESCE(AVG(p.savings_percentage), 0.0) as avg
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
-             WHERE ls.signal = 'positive'",
+             WHERE ls.signal = 'positive' AND (CAST($1 AS TEXT) IS NULL OR p.user_id = $2)",
         )
+        .bind(user_id)
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
         let avg_pos: f64 = avg_pos_row.get::<f64, _>("avg");
 
-        let avg_neg_row: sqlx::any::AnyRow = sqlx::query(
+        let avg_neg_row: sqlx_core::any::AnyRow = query(
             "SELECT COALESCE(AVG(p.savings_percentage), 0.0) as avg
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
-             WHERE ls.signal = 'negative'",
+             WHERE ls.signal = 'negative' AND (CAST($1 AS TEXT) IS NULL OR p.user_id = $2)",
         )
+        .bind(user_id)
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
         let avg_neg: f64 = avg_neg_row.get::<f64, _>("avg");
@@ -745,7 +755,11 @@ impl Database {
         let date_str = date_filter.to_rfc3339();
 
         // Build user filter
-        let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
+        let placeholders: Vec<String> = user_ids
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("${}", index + 1))
+            .collect();
         let user_filter = if user_ids.is_empty() {
             "1=1".to_string()
         } else {
@@ -761,15 +775,16 @@ impl Database {
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as total_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
-            WHERE {} AND created_at >= ?",
-            user_filter
+            WHERE {} AND created_at >= ${}",
+            user_filter,
+            user_ids.len() + 1
         );
-        let mut q = sqlx::query(&query_str);
+        let mut q = query(&query_str);
         for uid in user_ids {
             q = q.bind(uid);
         }
         q = q.bind(&date_str);
-        let row: sqlx::any::AnyRow = q.fetch_one(&self.pool).await?;
+        let row: sqlx_core::any::AnyRow = q.fetch_one(&self.pool).await?;
 
         let total_prompts: i64 = row.get("total_prompts");
         let total_original: i64 = row.get("total_original");
@@ -786,15 +801,16 @@ impl Database {
         let accepted_query = format!(
             "SELECT COUNT(DISTINCT ls.prompt_id) as cnt
              FROM learning_signals ls JOIN prompts p ON ls.prompt_id = p.id
-             WHERE ls.signal = 'positive' AND {} AND p.created_at >= ?",
-            accepted_user_filter
+             WHERE ls.signal = 'positive' AND {} AND p.created_at >= ${}",
+            accepted_user_filter,
+            user_ids.len() + 1
         );
-        let mut aq = sqlx::query(&accepted_query);
+        let mut aq = query(&accepted_query);
         for uid in user_ids {
             aq = aq.bind(uid);
         }
         aq = aq.bind(&date_str);
-        let accepted_row: sqlx::any::AnyRow = aq.fetch_one(&self.pool).await?;
+        let accepted_row: sqlx_core::any::AnyRow = aq.fetch_one(&self.pool).await?;
         let accepted_outputs: i64 = accepted_row.get("cnt");
 
         // Cost estimates
@@ -824,15 +840,15 @@ impl Database {
 
         // Top issues across team
         let fb_query = format!(
-            "SELECT analysis_feedback FROM prompts WHERE {} AND created_at >= ? ORDER BY created_at DESC LIMIT 200",
-            user_filter
+            "SELECT analysis_feedback FROM prompts WHERE {} AND created_at >= ${} ORDER BY created_at DESC LIMIT 200",
+            user_filter, user_ids.len() + 1
         );
-        let mut fb_q = sqlx::query(&fb_query);
+        let mut fb_q = query(&fb_query);
         for uid in user_ids {
             fb_q = fb_q.bind(uid);
         }
         fb_q = fb_q.bind(&date_str);
-        let feedback_rows: Vec<sqlx::any::AnyRow> = fb_q.fetch_all(&self.pool).await?;
+        let feedback_rows: Vec<sqlx_core::any::AnyRow> = fb_q.fetch_all(&self.pool).await?;
 
         let mut category_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
@@ -861,20 +877,21 @@ impl Database {
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as total_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
-            WHERE {} AND created_at >= ?
+            WHERE {} AND created_at >= ${}
             GROUP BY user_id ORDER BY total_saved DESC",
-            user_filter
+            user_filter,
+            user_ids.len() + 1
         );
-        let mut mq = sqlx::query(&member_query);
+        let mut mq = query(&member_query);
         for uid in user_ids {
             mq = mq.bind(uid);
         }
         mq = mq.bind(&date_str);
-        let member_rows: Vec<sqlx::any::AnyRow> = mq.fetch_all(&self.pool).await?;
+        let member_rows: Vec<sqlx_core::any::AnyRow> = mq.fetch_all(&self.pool).await?;
 
         let member_breakdown: Vec<MemberStats> = member_rows
             .into_iter()
-            .map(|r: sqlx::any::AnyRow| MemberStats {
+            .map(|r: sqlx_core::any::AnyRow| MemberStats {
                 user_id: r.get("user_id"),
                 total_prompts: r.get("total_prompts"),
                 total_token_delta: r.get("total_saved"),
@@ -893,20 +910,21 @@ impl Database {
                 COALESCE(SUM(original_token_count - refined_token_count), 0) as tokens_saved,
                 COALESCE(AVG(savings_percentage), 0.0) as avg_savings
             FROM prompts
-            WHERE {} AND created_at >= ?
+            WHERE {} AND created_at >= ${}
             GROUP BY SUBSTR(created_at, 1, 10) ORDER BY day ASC",
-            user_filter
+            user_filter,
+            user_ids.len() + 1
         );
-        let mut tq = sqlx::query(&trend_query);
+        let mut tq = query(&trend_query);
         for uid in user_ids {
             tq = tq.bind(uid);
         }
         tq = tq.bind(&date_str);
-        let trend_rows: Vec<sqlx::any::AnyRow> = tq.fetch_all(&self.pool).await?;
+        let trend_rows: Vec<sqlx_core::any::AnyRow> = tq.fetch_all(&self.pool).await?;
 
         let daily_trend: Vec<DailyTrend> = trend_rows
             .into_iter()
-            .map(|r: sqlx::any::AnyRow| DailyTrend {
+            .map(|r: sqlx_core::any::AnyRow| DailyTrend {
                 date: r.get("day"),
                 prompts: r.get("prompts"),
                 token_delta: r.get("tokens_saved"),
@@ -930,15 +948,15 @@ impl Database {
     }
 
     pub async fn get_audit_trail(&self, prompt_id: &str) -> Result<Vec<AuditLogEntry>> {
-        let rows: Vec<sqlx::any::AnyRow> =
-            sqlx::query("SELECT * FROM audit_log WHERE prompt_id = ? ORDER BY created_at ASC")
+        let rows: Vec<sqlx_core::any::AnyRow> =
+            query("SELECT * FROM audit_log WHERE prompt_id = $1 ORDER BY created_at ASC")
                 .bind(prompt_id)
                 .fetch_all(&self.pool)
                 .await?;
 
         let entries = rows
             .into_iter()
-            .map(|r: sqlx::any::AnyRow| {
+            .map(|r: sqlx_core::any::AnyRow| {
                 let detail_str: String = r.get("detail");
                 AuditLogEntry {
                     id: r.get("id"),

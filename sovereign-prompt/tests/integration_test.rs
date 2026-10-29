@@ -986,3 +986,51 @@ async fn db_team_report_all_users() {
     assert_eq!(report.member_breakdown.len(), 1);
     assert_eq!(report.member_breakdown[0].user_id, "solo_user");
 }
+
+#[tokio::test]
+async fn learning_insights_never_include_another_users_domains_issues_or_averages() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::new(dir.path().join("scoped.db").to_str().unwrap())
+        .await
+        .unwrap();
+    db.migrate().await.unwrap();
+    for signal in ["positive", "negative"] {
+        let mut record = PromptRecord::new(
+            "alice".into(),
+            "original".into(),
+            100,
+            "refined".into(),
+            10,
+            serde_json::json!([{"category":"private-alice-issue"}]),
+        );
+        record.domain = "private-alice-domain".into();
+        db.insert_prompt(&record).await.unwrap();
+        db.insert_learning_signal(&LearningSignal {
+            id: uuid::Uuid::new_v4().to_string(),
+            prompt_id: record.id,
+            signal: signal.into(),
+            comment: None,
+            actor: "alice".into(),
+            created_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    }
+    let bob = db.get_learning_insights(Some("bob")).await.unwrap();
+    assert_eq!(bob.total_ratings, 0);
+    assert!(bob.best_domains.is_empty());
+    assert!(bob.worst_issues.is_empty());
+    assert_eq!(bob.avg_savings_positive, 0.0);
+    assert_eq!(bob.avg_savings_negative, 0.0);
+    let alice = db.get_learning_insights(Some("alice")).await.unwrap();
+    assert_eq!(alice.total_ratings, 2);
+    assert!(alice
+        .best_domains
+        .iter()
+        .any(|value| value.contains("private-alice-domain")));
+    assert!(alice
+        .worst_issues
+        .iter()
+        .any(|value| value.contains("private-alice-issue")));
+    assert!(alice.avg_savings_positive > 80.0);
+}

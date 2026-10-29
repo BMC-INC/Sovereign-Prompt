@@ -1,0 +1,295 @@
+[
+  {
+    "name": "optimize_prompt",
+    "description": "Optimize a prompt. Returns refined version, token savings, feedback, and variants.",
+    "inputSchema": {
+      "properties": {
+        "domain": {
+          "description": "Optimization domain template (general/backend/frontend/data/security/product/documentation)",
+          "type": "string"
+        },
+        "explain_mode": {
+          "description": "When true, returns detailed heuristic explanations for each of the 9 checks",
+          "type": "boolean"
+        },
+        "prompt": {
+          "description": "The prompt to optimize",
+          "type": "string"
+        },
+        "token_model": {
+          "description": "Tokenizer model to use for primary counts: cl100k_base, o200k_base, p50k_base, r50k_base",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "User ID (optional, defaults to anonymous)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "capture_output",
+    "description": "Capture the AI output for a previously optimized prompt to enable learning.",
+    "inputSchema": {
+      "properties": {
+        "output": {
+          "description": "The AI output text to capture",
+          "type": "string"
+        },
+        "prompt_id": {
+          "description": "The prompt ID returned from optimize_prompt",
+          "type": "string"
+        },
+        "token_model": {
+          "description": "Optional tokenizer model override for output token count",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id",
+        "output"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_stats",
+    "description": "Get optimization stats for a user \u2014 total prompts, tokens saved, average savings.",
+    "inputSchema": {
+      "properties": {
+        "user_id": {
+          "description": "User ID to fetch stats for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_history",
+    "description": "Get recent prompt history for a user.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Number of recent prompts to return (max 50)",
+          "type": "integer"
+        },
+        "user_id": {
+          "description": "User ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_templates",
+    "description": "List available per-domain prompt optimization templates.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "count_tokens",
+    "description": "Count tokens for text across supported models or a single specified model.",
+    "inputSchema": {
+      "properties": {
+        "model": {
+          "description": "Optional model: cl100k_base, o200k_base, p50k_base, r50k_base",
+          "type": "string"
+        },
+        "text": {
+          "description": "Text to tokenize",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "governance_check",
+    "description": "Validate a stored prompt against governance policies.",
+    "inputSchema": {
+      "properties": {
+        "prompt_id": {
+          "description": "The prompt ID to validate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "governance_approve",
+    "description": "Approve or reject a prompt optimization with governance tracking.",
+    "inputSchema": {
+      "properties": {
+        "actor": {
+          "description": "The user or system approving/rejecting",
+          "type": "string"
+        },
+        "prompt_id": {
+          "description": "The prompt ID to approve/reject",
+          "type": "string"
+        },
+        "status": {
+          "description": "New status: approved or rejected",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id",
+        "actor",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_audit_trail",
+    "description": "Retrieve the governance audit trail for a prompt.",
+    "inputSchema": {
+      "properties": {
+        "prompt_id": {
+          "description": "The prompt ID to get audit trail for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "sign_optimization",
+    "description": "Cryptographically sign a prompt optimization record.",
+    "inputSchema": {
+      "properties": {
+        "prompt_id": {
+          "description": "The prompt ID to sign",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "verify_signature",
+    "description": "Verify the cryptographic signature and hash chain of a prompt record.",
+    "inputSchema": {
+      "properties": {
+        "prompt_id": {
+          "description": "The prompt ID to verify",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "savings_report",
+    "description": "Generate a cost savings report with token metrics, cost estimates across models, and daily trends.",
+    "inputSchema": {
+      "properties": {
+        "period": {
+          "description": "Time period: 7d, 30d, 90d, or all (default: 30d)",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "User ID to generate report for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "rate_optimization",
+    "description": "Rate an optimization as positive or negative, enabling the learning feedback loop.",
+    "inputSchema": {
+      "properties": {
+        "actor": {
+          "description": "Who is rating (defaults to 'anonymous')",
+          "type": "string"
+        },
+        "comment": {
+          "description": "Optional comment explaining the rating",
+          "type": "string"
+        },
+        "prompt_id": {
+          "description": "The prompt ID to rate",
+          "type": "string"
+        },
+        "signal": {
+          "description": "Rating: 'positive' or 'negative'",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt_id",
+        "signal"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "learning_insights",
+    "description": "Get learning insights from rated optimizations \u2014 best domains, satisfaction rate, recommendations.",
+    "inputSchema": {
+      "properties": {
+        "user_id": {
+          "description": "Optional user ID to filter insights",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "team_report",
+    "description": "Generate a team-level analytics report aggregating savings across multiple users.",
+    "inputSchema": {
+      "properties": {
+        "period": {
+          "description": "Time period: 7d, 30d, 90d, or all (default: 30d)",
+          "type": "string"
+        },
+        "user_ids": {
+          "description": "List of user IDs to include. If empty, aggregates all users.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  }
+]
