@@ -20,7 +20,7 @@ This repository contains two working Rust services intended for **local evaluati
 
 The repository also includes a separate promotional website in [`web/`](web/) and video source in [`sovereign-prompt-video/`](sovereign-prompt-video/). Neither is required to run the services.
 
-The current Cargo packages are version **0.2.0**. Historical feature announcements in the [changelog](CHANGELOG.md) use a separate sequence; they are not evidence of published binary releases or production certification.
+The current Cargo packages are version **0.4.0**. Earlier release tags advanced through 0.3.0 while package metadata remained at 0.1.0; this release aligns both package versions with the release tag. See the [changelog](CHANGELOG.md) for project history.
 
 ## What you can evaluate
 

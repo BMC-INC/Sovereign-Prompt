@@ -1766,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "sovereign-prompt"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "sovereign-proxy"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",

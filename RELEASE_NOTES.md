@@ -1,4 +1,4 @@
-Sovereign Prompt 0.2.0 updates the MCP SDK and protects every HTTP access path while preserving local stdio integration and the existing fifteen tools.
+Sovereign Prompt 0.4.0 updates the MCP SDK and protects every HTTP access path while preserving local stdio integration and the existing fifteen tools.
 
 - Current Streamable HTTP at `/mcp`, with a bounded compatibility adapter for existing `/sse` clients.
 - Exact Host/Origin validation, bounded requests and HTTP credentials bound to a user identity; another user's record IDs cannot grant access.

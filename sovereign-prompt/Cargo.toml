@@ -1,6 +1,6 @@
 [package]
 name = "sovereign-prompt"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["ExecLayer Inc."]
 description = "SovereignPrompt — Real-time MCP prompt optimization with persistence and token analysis"
