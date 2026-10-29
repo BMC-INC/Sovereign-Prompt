@@ -1774,6 +1774,7 @@ dependencies = [
  "dotenvy",
  "hex",
  "hmac",
+ "percent-encoding",
  "regex",
  "rmcp",
  "serde",

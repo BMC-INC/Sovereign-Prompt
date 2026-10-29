@@ -32,6 +32,7 @@ sha2 = "0.10"
 hmac = "0.12"
 hex = "0.4"
 toml = "0.8"
+percent-encoding = "2"
 tokio-stream = "0.1"
 tokio-util = "0.7"
 

@@ -14,6 +14,39 @@ pub struct Database {
     pool: AnyPool,
 }
 
+fn normalize_database_url(value: &str) -> Result<String> {
+    if value.starts_with("postgres://") || value.starts_with("postgresql://") {
+        return Ok(value.to_string());
+    }
+    let (path, options) = if let Some(sqlite) = value
+        .strip_prefix("sqlite://")
+        .or_else(|| value.strip_prefix("sqlite:"))
+    {
+        let (path, options) = sqlite.split_once('?').unwrap_or((sqlite, ""));
+        (
+            percent_encoding::percent_decode_str(path)
+                .decode_utf8()?
+                .into_owned(),
+            options,
+        )
+    } else {
+        (value.to_string(), "mode=rwc")
+    };
+    anyhow::ensure!(!path.is_empty(), "SQLite database path must not be empty");
+    // An opaque URI preserves Windows drive letters/backslashes and avoids
+    // interpreting a filename as a URL authority, fragment, or query string.
+    let path = if path == ":memory:" {
+        path
+    } else {
+        percent_encoding::utf8_percent_encode(&path, percent_encoding::NON_ALPHANUMERIC).to_string()
+    };
+    Ok(if options.is_empty() {
+        format!("sqlite:{path}")
+    } else {
+        format!("sqlite:{path}?{options}")
+    })
+}
+
 impl Database {
     pub async fn new(url: &str) -> Result<Self> {
         static DRIVERS: std::sync::Once = std::sync::Once::new();
@@ -24,14 +57,7 @@ impl Database {
             ])
             .expect("SQLx drivers are installed once by SovereignPrompt");
         });
-        let db_url = if url.starts_with("postgres://")
-            || url.starts_with("postgresql://")
-            || url.starts_with("sqlite://")
-        {
-            url.to_string()
-        } else {
-            format!("sqlite://{}?mode=rwc", url)
-        };
+        let db_url = normalize_database_url(url)?;
         let pool = AnyPoolOptions::new()
             .max_connections(5)
             .connect(&db_url)
@@ -973,5 +999,42 @@ impl Database {
             .collect();
 
         Ok(entries)
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    use sqlx_core::connection::ConnectOptions;
+    use std::str::FromStr;
+
+    #[test]
+    fn sqlite_paths_survive_url_parsing_on_every_platform() {
+        for path in [
+            r"C:\Users\Name\AppData\Local\Temp\test.db",
+            "/tmp/db space#%name.db",
+        ] {
+            let normalized = normalize_database_url(path).unwrap();
+            let any = sqlx_core::any::AnyConnectOptions::from_str(&normalized).unwrap();
+            let sqlite = sqlx_sqlite::SqliteConnectOptions::from_url(&any.database_url).unwrap();
+            assert_eq!(sqlite.get_filename().to_str().unwrap(), path);
+        }
+        let normalized =
+            normalize_database_url("sqlite://C:%5CUsers%5CName%5Ctest.db?mode=rwc").unwrap();
+        let any = sqlx_core::any::AnyConnectOptions::from_str(&normalized).unwrap();
+        let sqlite = sqlx_sqlite::SqliteConnectOptions::from_url(&any.database_url).unwrap();
+        assert_eq!(
+            sqlite.get_filename().to_str().unwrap(),
+            r"C:\Users\Name\test.db"
+        );
+    }
+
+    #[tokio::test]
+    async fn sqlite_filename_with_spaces_fragments_and_percent_is_opened_literally() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db space#%name.db");
+        let db = Database::new(path.to_str().unwrap()).await.unwrap();
+        db.migrate().await.unwrap();
+        assert!(path.exists());
     }
 }

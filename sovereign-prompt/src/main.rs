@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
         HttpSecurity::from_env(mcp_sse_addr, HttpService::Mcp)?;
     }
     let database_url = std::env::var("DATABASE_URL")
-        .or_else(|_| std::env::var("SOVEREIGN_DB_PATH").map(|p| format!("sqlite://{}?mode=rwc", p)))
+        .or_else(|_| std::env::var("SOVEREIGN_DB_PATH"))
         .unwrap_or_else(|_| "sqlite://./sovereign_prompt.db?mode=rwc".to_string());
     let db = Arc::new(db::Database::new(&database_url).await?);
     db.migrate().await?;
