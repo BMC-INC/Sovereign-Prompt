@@ -1,7 +1,9 @@
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SovereignConfig {
     #[serde(default)]
     pub heuristics: HeuristicsConfig,
@@ -10,6 +12,7 @@ pub struct SovereignConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HeuristicsConfig {
     #[serde(default = "default_true")]
     pub vagueness: bool,
@@ -53,6 +56,7 @@ pub struct HeuristicsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CustomCheck {
     pub name: String,
     pub pattern: String,
@@ -102,6 +106,7 @@ pub enum InjectionMode {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InjectionConfig {
     #[serde(default)]
     pub mode: InjectionMode,
@@ -135,27 +140,89 @@ fn default_format_min_length() -> usize {
 }
 
 impl SovereignConfig {
-    pub fn load() -> Self {
-        let path = std::env::var("SOVEREIGN_CONFIG_PATH")
-            .unwrap_or_else(|_| "./sovereign_prompt.toml".to_string());
-
-        if Path::new(&path).exists() {
-            match std::fs::read_to_string(&path) {
-                Ok(contents) => match toml::from_str(&contents) {
-                    Ok(config) => {
-                        tracing::info!("Loaded config from {}", path);
-                        return config;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse config file {}: {}", path, e);
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("Failed to read config file {}: {}", path, e);
-                }
-            }
+    pub fn load() -> Result<Self> {
+        match std::env::var_os("SOVEREIGN_CONFIG_PATH") {
+            Some(path) => Self::load_file(Path::new(&path), false),
+            None => Self::load_file(Path::new("./sovereign_prompt.toml"), true),
         }
+    }
 
-        Self::default()
+    fn load_file(path: &Path, allow_missing: bool) -> Result<Self> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(error) if allow_missing && error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Cannot read config {}", path.display()));
+            }
+        };
+        let config = toml::from_str(&contents)
+            .with_context(|| format!("Invalid config {}", path.display()))?;
+        tracing::info!("Loaded config from {}", path.display());
+        Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_optional_config_uses_defaults_but_explicit_path_is_required() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.toml");
+        assert_eq!(
+            SovereignConfig::load_file(&path, true)
+                .unwrap()
+                .injection
+                .mode,
+            InjectionMode::Warn
+        );
+        assert!(SovereignConfig::load_file(&path, false).is_err());
+    }
+
+    #[test]
+    fn invalid_or_misspelled_policy_never_falls_back_to_warn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.toml");
+        for contents in [
+            "[injection",
+            "[injection]\nmode = 'rejcet'",
+            "[injection]\nmod = 'reject'",
+            "[heuristics]\ngovernnace = false",
+            "[injecion]\nmode = 'reject'",
+        ] {
+            std::fs::write(&path, contents).unwrap();
+            assert!(
+                SovereignConfig::load_file(&path, true).is_err(),
+                "{contents}"
+            );
+            assert!(
+                SovereignConfig::load_file(&path, false).is_err(),
+                "{contents}"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_rejection_policy_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.toml");
+        std::fs::write(&path, "[injection]\nmode = 'reject'").unwrap();
+        assert_eq!(
+            SovereignConfig::load_file(&path, false)
+                .unwrap()
+                .injection
+                .mode,
+            InjectionMode::Reject
+        );
+    }
+
+    #[test]
+    fn unreadable_config_never_uses_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(SovereignConfig::load_file(dir.path(), true).is_err());
     }
 }

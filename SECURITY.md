@@ -1,86 +1,41 @@
-# Security Policy
+# Security boundaries
 
-## Architecture
+SovereignPrompt is intended for local evaluation and controlled integration. The source is available for review; that is not a security certification.
 
-SovereignPrompt is a **local-only** MCP server. It runs entirely on the user's machine with zero outbound network calls.
+## Data flow
 
-- **No telemetry.** No usage data, prompts, or analytics are ever sent externally.
-- **No cloud dependencies.** The server operates over `stdio` or a local SSE transport — both bound to `127.0.0.1` by default.
-- **SQLite persistence** is file-local. The database path is configurable via `SOVEREIGN_DB_PATH`.
+The analysis and refinement engine runs locally without a model API call. SQLite stores data locally; PostgreSQL uses the configured database connection. The optional HTTP proxy sends requests, credentials, and prompt content to the configured upstream provider. No analytics reporting service is built into the Rust services.
 
-## Data Handling
+Original prompts, refined prompts, captured responses, user labels, and audit records are persisted without application-level encryption. There is no automatic retention policy. Protect the database, backups, process environment, and any signing key. User labels are not authenticated identities or tenant boundaries.
 
-| Data Type | Storage | Retention |
-|:----------|:--------|:----------|
-| Original prompts | SQLite (local) | Until user deletes DB file |
-| Refined prompts | SQLite (local) | Until user deletes DB file |
-| AI output (if captured) | SQLite (local) | Until user deletes DB file |
-| HMAC signatures | SQLite (local) | Until user deletes DB file |
-| Audit trail | SQLite (local) | Until user deletes DB file |
-| Configuration | TOML file (local) | User-managed |
+## HTTP services
 
-No data leaves the local filesystem. There are no API keys, no external service calls, and no network egress.
+The dashboard, proxy, and legacy MCP SSE endpoint default to loopback. The development Docker configuration publishes its ports on loopback. These services do not have complete built-in authentication, authorization, host/origin validation, or tenant isolation. The existence of `auth.rs` does not mean its middleware protects every route.
 
-## Cryptographic Integrity
+Prefer stdio for local MCP access. Public or shared deployments require a separately reviewed gateway and access policy; do not publish the default ports directly or expose them through an unrestricted tunnel.
 
-- **Content hashing**: SHA-256 over `original_prompt || "||" || refined_prompt` ensures tamper detection.
-- **Output hashing**: SHA-256 over captured AI output for end-to-end verification.
-- **HMAC-SHA256 signing**: Records can be cryptographically signed using a configurable key (`SOVEREIGN_HMAC_KEY`).
-- **Hash chain verification**: The `verify_signature` tool validates both content hash and output hash integrity.
+## Heuristic checks
 
-**Important:** Change the default HMAC key in production. The built-in dev key is for local development only.
+Sensitive-data checks recognize specific SSN, credit-card, credential, and PII-reference patterns. Injection checks recognize configured wording patterns. Both can miss sensitive content and produce false positives. They do not replace access control, a complete DLP system, or review of model outputs.
 
-## Prompt Injection Detection
+The MCP optimizer records `approved`, `pending`, or `rejected` governance status. A returned optimization is not automatic approval to send the text elsewhere. The HTTP proxy rejects critical governance matches and configured injection rejections with HTTP 403. It checks the last user message's extracted text, not every system message, tool result, attachment, or prior turn. Requests without that text pass through.
 
-SovereignPrompt detects 8 prompt injection patterns:
+## Integrity records
 
-- `ignore previous`, `ignore all`, `disregard`
-- `forget everything`, `new instruction`
-- `system:`, `assistant:`, `jailbreak`
+SHA-256 hashes detect changes to the values covered by the record. HMAC-SHA256 authenticates records to a shared key. Anyone holding that key can produce a valid tag; this is not public-key signing, independent proof of identity, or non-repudiation.
 
-Injection handling is configurable via `sovereign_prompt.toml`:
+Set `SOVEREIGN_HMAC_KEY` before relying on HMAC verification. The built-in development key is publicly known. Protect and back up the key separately from the database.
 
-| Mode | Behavior |
-|:-----|:---------|
-| `warn` (default) | Flag in analysis feedback |
-| `rewrite` | Strip injection patterns before refinement |
-| `reject` | Return an error immediately |
+## Dependencies and release limits
 
-## Governance Policy
+The current workspace uses `rmcp` 0.1.5. CI's audit step contains explicit exceptions for RUSTSEC-2023-0071 and RUSTSEC-2026-0189; a passing CI result does not mean there are no advisories. [RUSTSEC-2026-0189](https://rustsec.org/advisories/RUSTSEC-2026-0189.html) concerns HTTP transport host validation; stdio is unaffected by that advisory. GitHub also reports version-based `rmcp` advisories concerning HTTP sessions, OAuth metadata, and redirect headers, with fixes through the 2.1 line. A migration must cover the current SDK and transport behavior rather than only the first advisory's minimum version. Migration and HTTP exposure review remain release work.
 
-Built-in governance checks detect sensitive data patterns:
+The lockfile retains `rsa` through SQLx's optional MySQL dependency resolution. MySQL is not an enabled backend: SQLx defaults are disabled and only SQLite, PostgreSQL, Any, Tokio, and Rustls are selected. Confirm the active feature graph with `cargo tree -e features -i sqlx` rather than treating a lockfile entry as proof that a backend is in use. The unfiltered audit also reports the unmaintained `paste` dependency and yanked lockfile entries; these findings are not suppressed here.
 
-- SSN patterns (`\d{3}-\d{2}-\d{4}`)
-- Credit card numbers (`\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}`)
-- Credential patterns (`api_key`, `secret_key`, `password`)
-- PII references (`social security`, `date of birth`, `passport number`, `bank account`)
+The October 2026 dependency cleanup updates OpenSSL, Tokio, Rand, Anyhow, and Event Listener within their compatible version lines. This removes those known version findings without claiming that the workspace is free of vulnerabilities.
 
-Prompts containing critical governance violations are automatically rejected. Warning-level findings are flagged as pending for review.
+Run the test suite, Clippy, and an unfiltered dependency audit when assessing a deployment. The core library denies unsafe Rust in its own code; that attribute does not certify the implementation or its dependencies.
 
-## `#![deny(unsafe_code)]`
+## Reporting a vulnerability
 
-The crate enforces `#![deny(unsafe_code)]` at the library root. No `unsafe` blocks are permitted anywhere in the codebase.
-
-## CI Recommendations
-
-```yaml
-# Add to your CI pipeline
-- cargo audit          # Check dependencies for known vulnerabilities
-- cargo clippy -- -D warnings  # Zero warnings policy
-- cargo test           # All integration tests pass
-```
-
-## Supported Versions
-
-| Version | Supported |
-|:--------|:----------|
-| 0.1.x | Yes |
-
-## Reporting a Vulnerability
-
-If you discover a security vulnerability, please report it responsibly:
-
-1. **Do not** open a public issue.
-2. Email security concerns to the maintainers via the [ExecLayer Inc.](https://github.com/BMC-INC) GitHub organization.
-3. Include a description of the vulnerability, steps to reproduce, and potential impact.
-4. We will acknowledge receipt within 48 hours and provide a timeline for a fix.
+Use [GitHub private vulnerability reporting](https://github.com/BMC-INC/Sovereign-Prompt/security/advisories/new) if enabled. Otherwise contact a maintainer through a verified channel listed on the [organization profile](https://github.com/BMC-INC) to arrange private disclosure. Do not include credentials, private prompts, or exploit details in a public issue.

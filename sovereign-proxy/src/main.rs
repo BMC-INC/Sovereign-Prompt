@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     db.migrate().await?;
 
     let tokenizer = Arc::new(Tokenizer::new()?);
-    let config = Arc::new(SovereignConfig::load());
+    let config = Arc::new(SovereignConfig::load()?);
     let upstream = Arc::new(UpstreamClient::new());
 
     let state = ProxyState {

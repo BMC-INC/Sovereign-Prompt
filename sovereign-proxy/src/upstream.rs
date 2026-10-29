@@ -16,6 +16,10 @@ impl UpstreamClient {
         let openai_url = std::env::var("SOVEREIGN_UPSTREAM_OPENAI")
             .unwrap_or_else(|_| "https://api.openai.com".to_string());
 
+        Self::with_urls(anthropic_url, openai_url)
+    }
+
+    pub(crate) fn with_urls(anthropic_url: String, openai_url: String) -> Self {
         Self {
             client: Client::new(),
             anthropic_url,

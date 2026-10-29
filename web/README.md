@@ -1,31 +1,23 @@
-# Sovereign Prompt — Web
+# SovereignPrompt promotional website
 
-Marketing landing page for [SovereignPrompt](https://github.com/BMC-INC/Sovereign-Prompt), the first MCP-native prompt optimization engine built entirely in Rust.
+This optional Next.js site presents the project. It is separate from the Rust MCP server, proxy, and built-in analytics dashboard. No live hosted URL is currently documented as available.
 
-## Live
-
-**https://sovereignclaw.com/promptgen**
-
-## Stack
-
-- Next.js 14 (React 18)
-- Tailwind CSS 3
-- SovereignClaw brand system (Inter, Syne, Michroma, Roboto Mono)
-
-## Deployment
-
-Deployed as a Vercel sub-app of sovereignclaw.com:
-
-- **Vercel project**: sovereign-prompt-web
-- **basePath**: `/promptgen` (set in next.config.mjs)
-- **Proxied via**: SovereignClaw-web Vercel rewrites
+## Local development
 
 ```bash
-npm install
-npm run dev      # localhost:3000/promptgen
-npm run build    # production build
+cd web
+npm ci
+npm run dev
 ```
 
-## Part of SovereignClaw
+Open [localhost:3000/sovereign-prompt](http://localhost:3000/sovereign-prompt). Use `npm run build` for a production build and `npm start` to serve that build locally.
 
-This is a product page under the [SovereignClaw](https://sovereignclaw.com) ecosystem by ExecLayer Inc.
+The [root README](../README.md) is the source of truth for supported service behavior, setup, and limitations. Review promotional claims here against current code and validation before publishing a site. Installing or running this website does not start the MCP or proxy services.
+
+## Dependency maintenance
+
+Next.js and its ESLint configuration are pinned together to 15.5.28. React remains
+on version 18. The scoped PostCSS 8.5.32 override fixes advisories in Next's bundled
+PostCSS dependency while preserving its major API version. Keep the override until
+Next supplies a patched version, and rerun the production build, lint, and
+`npm audit` after dependency updates.

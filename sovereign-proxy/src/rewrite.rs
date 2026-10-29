@@ -66,14 +66,21 @@ pub fn replace_last_user_message(body: &mut Value, optimized: &str, _format: Api
                 last_user["content"] = Value::String(optimized.to_string());
             }
             Value::Array(blocks) => {
-                let mut new_blocks = blocks.clone();
-                if let Some(last_text) = new_blocks
-                    .iter_mut()
-                    .rev()
-                    .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
-                {
-                    last_text["text"] = Value::String(optimized.to_string());
-                }
+                let mut inserted = false;
+                let new_blocks: Vec<Value> = blocks
+                    .into_iter()
+                    .filter_map(|mut block| {
+                        if block.get("type").and_then(|value| value.as_str()) != Some("text") {
+                            return Some(block);
+                        }
+                        if inserted {
+                            return None;
+                        }
+                        inserted = true;
+                        block["text"] = Value::String(optimized.to_string());
+                        Some(block)
+                    })
+                    .collect();
                 last_user["content"] = Value::Array(new_blocks);
             }
             _ => {}
@@ -152,6 +159,27 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0]["type"], "image");
         assert_eq!(blocks[1]["text"], "Describe this image concisely.");
+    }
+
+    #[test]
+    fn replacing_multiple_text_blocks_does_not_duplicate_original_text() {
+        for format in [ApiFormat::Anthropic, ApiFormat::OpenAI] {
+            let image = serde_json::json!({"type": "image_url", "image_url": {"url": "https://example.com/image.png"}});
+            let mut body = serde_json::json!({"messages": [{"role": "user", "content": [
+                {"type": "text", "text": "First part"}, image.clone(), {"type": "text", "text": "Second part"}
+            ]}]});
+            assert_eq!(
+                extract_last_user_message(&body, format).as_deref(),
+                Some("First part Second part")
+            );
+            replace_last_user_message(&mut body, "Combined optimized prompt", format);
+            assert_eq!(
+                extract_last_user_message(&body, format).as_deref(),
+                Some("Combined optimized prompt")
+            );
+            assert_eq!(body["messages"][0]["content"][1], image);
+            assert_eq!(body["messages"][0]["content"].as_array().unwrap().len(), 2);
+        }
     }
 
     #[test]

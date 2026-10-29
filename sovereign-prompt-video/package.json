@@ -13,13 +13,16 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@remotion/cli": "^4.0.435",
-    "@remotion/player": "^4.0.435",
+    "@remotion/cli": "4.0.539",
+    "@remotion/player": "4.0.539",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "remotion": "^4.0.435",
+    "remotion": "4.0.539",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "zod": "4.6.7"
   }
 }

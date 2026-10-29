@@ -31,10 +31,6 @@ jobs:
             os: windows-latest
             artifact: sovereign-prompt-windows-x86_64.exe
 
-    defaults:
-      run:
-        working-directory: sovereign-prompt
-
     steps:
       - uses: actions/checkout@v4
 
@@ -50,20 +46,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: sovereign-prompt
+          workspaces: .
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --workspace --locked --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Rename binary (unix)
         if: runner.os != 'Windows'
-        run: cp target/${{ matrix.target }}/release/sovereign-prompt ../${{ matrix.artifact }}
+        run: cp target/${{ matrix.target }}/release/sovereign-prompt ${{ matrix.artifact }}
 
       - name: Rename binary (windows)
         if: runner.os == 'Windows'
-        run: cp target/${{ matrix.target }}/release/sovereign-prompt.exe ../${{ matrix.artifact }}
+        run: cp target/${{ matrix.target }}/release/sovereign-prompt.exe ${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
